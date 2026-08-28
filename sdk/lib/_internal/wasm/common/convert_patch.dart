@@ -2959,6 +2959,60 @@ class _JsonTokenReader {
   }
 
   @patch
+  @pragma('wasm:prefer-inline')
+  String _decodeCachedString(int start, int end) {
+    final len = end - start;
+    if (len == 0) return '';
+    if (len > _maxCachedStringLength) {
+      if (_isVerbatimUtf8(_bytes, start, end)) {
+        return _stringFromAsciiBytes(
+          _data,
+          _offsetInElements + start,
+          _offsetInElements + end,
+        );
+      }
+      return _decodeStringUtf8(
+        _bytes,
+        start,
+        end,
+        allowMalformed: allowMalformed,
+      );
+    }
+
+    final d = _data;
+    final base = _offsetInElements;
+
+    var h = len;
+    for (var i = start; i < end; i++) {
+      h = (h * 31 + d.readUnsigned(base + i)) & 0x3fffffff;
+    }
+    final slot = h & _stringCacheMask;
+    final cached = _stringCache[slot];
+    if (cached != null && cached.length == len) {
+      var match = true;
+      for (var i = 0; i < len; i++) {
+        final b = d.readUnsigned(base + start + i);
+        if (b > 0x7F || b != cached.codeUnitAt(i)) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        return cached;
+      }
+    }
+
+    final String s;
+    if (_isVerbatimUtf8(_bytes, start, end)) {
+      s = _stringFromAsciiBytes(d, base + start, base + end);
+    } else {
+      s = _decodeStringUtf8(_bytes, start, end, allowMalformed: allowMalformed);
+    }
+    _stringCache[slot] = s;
+    return s;
+  }
+
+  @patch
   void _skipWs() {
     final _len = _bytes.length;
     while (_offset < _len && _isWs(_b(_offset))) {
