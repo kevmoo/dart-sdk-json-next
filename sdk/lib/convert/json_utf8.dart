@@ -1604,8 +1604,8 @@ final class _ContainerFrame {
 
 final class _JsonTokenReader implements JsonTokenReader {
   static const int _maxDepth = 1024;
-  static const int _stringCacheSize = 16;
-  static const int _stringCacheMask = 15;
+  static const int _stringCacheSize = 128;
+  static const int _stringCacheMask = 127;
   static const int _maxCachedStringLength = 64;
 
   final Uint8List _bytes;
