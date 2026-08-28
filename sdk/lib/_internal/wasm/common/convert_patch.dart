@@ -2945,6 +2945,47 @@ class _JsonTokenReader {
   int _b(int index) => _data.readUnsigned(_offsetInElements + index);
 
   @pragma('wasm:prefer-inline')
+  static bool _isVerbatimAscii(WasmArray<WasmI8> d, int start, int end) {
+    for (var i = start; i < end; i++) {
+      final b = d.readUnsigned(i);
+      if (b < 0x20 || b > 0x7E || b == 0x22 || b == 0x5C) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  @pragma('wasm:prefer-inline')
+  int _skipStringLiteralWasm(int offset) {
+    final len = _bytes.length;
+    final d = _data;
+    final base = _offsetInElements;
+    var i = offset;
+    while (i < len) {
+      final b = d.readUnsigned(base + i);
+      if (b < 0x20) {
+        throw FormatException(
+          'Unescaped control character in string literal at offset $i',
+          _bytes,
+          i,
+        );
+      }
+      if (b == 92) {
+        i = _validateEscape(_bytes, i + 1, len);
+      } else if (b == 34) {
+        return i;
+      } else {
+        i++;
+      }
+    }
+    throw FormatException(
+      'Unterminated string literal at offset ${offset > 0 ? offset - 1 : 0}',
+      _bytes,
+      offset > 0 ? offset - 1 : 0,
+    );
+  }
+
+  @pragma('wasm:prefer-inline')
   int _readInt64LE(int offset) {
     final o = _offsetInElements + offset;
     final d = _data;
@@ -2963,13 +3004,11 @@ class _JsonTokenReader {
   String _decodeCachedString(int start, int end) {
     final len = end - start;
     if (len == 0) return '';
+    final d = _data;
+    final base = _offsetInElements;
     if (len > _maxCachedStringLength) {
-      if (_isVerbatimUtf8(_bytes, start, end)) {
-        return _stringFromAsciiBytes(
-          _data,
-          _offsetInElements + start,
-          _offsetInElements + end,
-        );
+      if (_isVerbatimAscii(d, base + start, base + end)) {
+        return _stringFromAsciiBytes(d, base + start, base + end);
       }
       return _decodeStringUtf8(
         _bytes,
@@ -2978,9 +3017,6 @@ class _JsonTokenReader {
         allowMalformed: allowMalformed,
       );
     }
-
-    final d = _data;
-    final base = _offsetInElements;
 
     var h = len;
     for (var i = start; i < end; i++) {
@@ -3003,7 +3039,7 @@ class _JsonTokenReader {
     }
 
     final String s;
-    if (_isVerbatimUtf8(_bytes, start, end)) {
+    if (_isVerbatimAscii(d, base + start, base + end)) {
       s = _stringFromAsciiBytes(d, base + start, base + end);
     } else {
       s = _decodeStringUtf8(_bytes, start, end, allowMalformed: allowMalformed);
@@ -3014,10 +3050,21 @@ class _JsonTokenReader {
 
   @patch
   void _skipWs() {
-    final _len = _bytes.length;
-    while (_offset < _len && _isWs(_b(_offset))) {
-      _offset++;
+    final len = _bytes.length;
+    var off = _offset;
+    final d = _data;
+    final base = _offsetInElements;
+
+    if (off >= len || !_isWs(d.readUnsigned(base + off))) return;
+    off++;
+
+    while (off + 8 <= len && _readInt64LE(off) == 0x2020202020202020) {
+      off += 8;
     }
+    while (off < len && _isWs(d.readUnsigned(base + off))) {
+      off++;
+    }
+    _offset = off;
   }
 
   @patch
@@ -3145,6 +3192,205 @@ class _JsonTokenReader {
   }
 
   @patch
+  (int, int) _scanNameSpanAndConsumeColon() {
+    final _len = _bytes.length;
+    final prevOffset = _offset;
+    final prevStackLen = _stack.length;
+    _ReaderItemState? prevTopState;
+    if (_stack.isNotEmpty) {
+      prevTopState = _stack.last.state;
+    }
+    final prevHasReadRoot = _hasReadRoot;
+    try {
+      _beforeReadingName();
+      var i = _offset;
+      while (i < _len && _isWs(_b(i))) {
+        i++;
+      }
+      if (i >= _len || _b(i) != 34) {
+        throw FormatException('Expected string at offset $i', _bytes, i);
+      }
+      final start = i + 1;
+      final end = _skipStringLiteralWasm(start);
+      i = end + 1;
+
+      // Fused colon consumption & trailing whitespace
+      if (i < _len && _b(i) == 58) {
+        i++;
+      } else {
+        while (i < _len && _isWs(_b(i))) {
+          i++;
+        }
+        if (i >= _len || _b(i) != 58) {
+          throw FormatException('Expected ":" at offset $i', _bytes, i);
+        }
+        i++;
+      }
+      while (i < _len && _isWs(_b(i))) {
+        i++;
+      }
+      _offset = i;
+      _stack.last.state = _ReaderItemState.afterName;
+      return (start, end);
+    } catch (_) {
+      _offset = prevOffset;
+      if (_stack.length > prevStackLen) {
+        _stack.length = prevStackLen;
+      }
+      if (_stack.isNotEmpty && prevTopState != null) {
+        _stack.last.state = prevTopState;
+      }
+      _hasReadRoot = prevHasReadRoot;
+      rethrow;
+    }
+  }
+
+  @patch
+  String nextName() {
+    final (start, end) = _scanNameSpanAndConsumeColon();
+    return _decodeCachedString(start, end);
+  }
+
+  @patch
+  (int, int) readStringSpan() {
+    final _len = _bytes.length;
+    final prevOffset = _offset;
+    final prevStackLen = _stack.length;
+    _ReaderItemState? prevTopState;
+    if (_stack.isNotEmpty) {
+      prevTopState = _stack.last.state;
+    }
+    final prevHasReadRoot = _hasReadRoot;
+    try {
+      _beforeReadingValue();
+      var i = _offset;
+      while (i < _len && _isWs(_b(i))) {
+        i++;
+      }
+      if (i >= _len || _b(i) != 34) {
+        throw FormatException('Expected string at offset $i', _bytes, i);
+      }
+      final start = i + 1;
+      final end = _skipStringLiteralWasm(start);
+      i = end + 1;
+
+      var j = i;
+      while (j < _len && _isWs(_b(j))) {
+        j++;
+      }
+      if (_stack.isNotEmpty) {
+        final top = _stack.last;
+        if (j < _len && _b(j) == 44) {
+          j++;
+          while (j < _len && _isWs(_b(j))) {
+            j++;
+          }
+          top.state = _ReaderItemState.afterComma;
+          _offset = j;
+        } else {
+          top.state = _ReaderItemState.afterValue;
+          _offset = j;
+        }
+      } else {
+        _hasReadRoot = true;
+        _offset = j;
+      }
+
+      return (start, end);
+    } catch (_) {
+      _offset = prevOffset;
+      if (_stack.length > prevStackLen) {
+        _stack.length = prevStackLen;
+      }
+      if (_stack.isNotEmpty && prevTopState != null) {
+        _stack.last.state = prevTopState;
+      }
+      _hasReadRoot = prevHasReadRoot;
+      rethrow;
+    }
+  }
+
+  @patch
+  String readString() {
+    final (start, end) = readStringSpan();
+    return _decodeCachedString(start, end);
+  }
+
+  @patch
+  int selectString(JsonKeyOptions options) {
+    final _len = _bytes.length;
+    final prevOffset = _offset;
+    final prevStackLen = _stack.length;
+    _ReaderItemState? prevTopState;
+    if (_stack.isNotEmpty) {
+      prevTopState = _stack.last.state;
+    }
+    final prevHasReadRoot = _hasReadRoot;
+    try {
+      _beforeReadingValue();
+      var i = _offset;
+      while (i < _len && _isWs(_b(i))) {
+        i++;
+      }
+      if (i >= _len || _b(i) != 34) {
+        throw FormatException('Expected string at offset $i', _bytes, i);
+      }
+      final start = i + 1;
+      final end = _skipStringLiteralWasm(start);
+      i = end + 1;
+
+      var j = i;
+      while (j < _len && _isWs(_b(j))) {
+        j++;
+      }
+      if (_stack.isNotEmpty) {
+        final top = _stack.last;
+        if (j < _len && _b(j) == 44) {
+          j++;
+          while (j < _len && _isWs(_b(j))) {
+            j++;
+          }
+          top.state = _ReaderItemState.afterComma;
+          _offset = j;
+        } else {
+          top.state = _ReaderItemState.afterValue;
+          _offset = j;
+        }
+      } else {
+        _hasReadRoot = true;
+        _offset = j;
+      }
+
+      final len = end - start;
+      final d = _data;
+      final base = _offsetInElements;
+      if (_isVerbatimAscii(d, base + start, base + end)) {
+        if (len <= 8 && options._shortKeyInts != null) {
+          if (start + 8 <= _len) {
+            final keyInt = _readInt64LE(start) & JsonKeyOptions._lenMasks[len];
+            return options._findShortKeyIndex(keyInt, len);
+          }
+          return options._selectKey(_bytes, start, end);
+        }
+        return options._selectKey(_bytes, start, end);
+      }
+
+      final unescaped = _decodeCachedString(start, end);
+      return options.keys.indexOf(unescaped);
+    } catch (_) {
+      _offset = prevOffset;
+      if (_stack.length > prevStackLen) {
+        _stack.length = prevStackLen;
+      }
+      if (_stack.isNotEmpty && prevTopState != null) {
+        _stack.last.state = prevTopState;
+      }
+      _hasReadRoot = prevHasReadRoot;
+      rethrow;
+    }
+  }
+
+  @patch
   int selectName(JsonKeyOptions options) {
     final _len = _bytes.length;
     final prevOffset = _offset;
@@ -3158,7 +3404,9 @@ class _JsonTokenReader {
       final (start, end) = _scanNameSpanAndConsumeColon();
 
       final len = end - start;
-      if (_isVerbatimUtf8(_bytes, start, end)) {
+      final d = _data;
+      final base = _offsetInElements;
+      if (_isVerbatimAscii(d, base + start, base + end)) {
         if (len <= 8 && options._shortKeyInts != null) {
           if (start + 8 <= _len) {
             final keyInt = _readInt64LE(start) & JsonKeyOptions._lenMasks[len];
