@@ -1595,13 +1595,6 @@ enum _ContainerType { object, array }
 
 enum _ReaderItemState { start, afterName, afterValue, afterComma }
 
-final class _ContainerFrame {
-  final _ContainerType type;
-  _ReaderItemState state;
-
-  _ContainerFrame(this.type, this.state);
-}
-
 final class _JsonTokenReader implements JsonTokenReader {
   static const int _maxDepth = 1024;
   static const int _stringCacheSize = 128;
@@ -1612,7 +1605,10 @@ final class _JsonTokenReader implements JsonTokenReader {
   final ByteData _byteData;
   final bool allowMalformed;
   int _offset = 0;
-  final List<_ContainerFrame> _stack = [];
+  Uint8List _stack = Uint8List(64);
+  int _stackLength = 0;
+  int _topType = -1; // -1: none, 0: object, 1: array
+  int _topState = 0; // 0: start, 1: afterName, 2: afterValue, 3: afterComma
   bool _hasReadRoot = false;
   final List<String?> _stringCache = List<String?>.filled(
     _stringCacheSize,
@@ -1663,21 +1659,20 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   void _beforeReadingName() {
     _skipWs();
-    if (_stack.isEmpty || _stack.last.type != _ContainerType.object) {
+    if (_stackLength == 0 || _topType != 0) {
       throw FormatException(
         'Cannot read property name outside of an object at offset $_offset',
       );
     }
-    final top = _stack.last;
-    if (top.state == _ReaderItemState.afterName) {
+    if (_topState == 1) {
       throw FormatException(
         'Expected property value before next property name at offset $_offset',
       );
     }
-    if (top.state == _ReaderItemState.afterValue) {
+    if (_topState == 2) {
       if (_offset < _bytes.length && _bytes[_offset] == 44) {
         _offset++;
-        top.state = _ReaderItemState.afterComma;
+        _topState = 3;
         _skipWs();
       } else {
         throw FormatException(
@@ -1689,19 +1684,18 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   void _beforeReadingValue() {
     _skipWs();
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
-      if (top.type == _ContainerType.object) {
-        if (top.state != _ReaderItemState.afterName) {
+    if (_stackLength > 0) {
+      if (_topType == 0) {
+        if (_topState != 1) {
           throw FormatException(
             'Expected property name before value at offset $_offset',
           );
         }
       } else {
-        if (top.state == _ReaderItemState.afterValue) {
+        if (_topState == 2) {
           if (_offset < _bytes.length && _bytes[_offset] == 44) {
             _offset++;
-            top.state = _ReaderItemState.afterComma;
+            _topState = 3;
             _skipWs();
           } else {
             throw FormatException(
@@ -1722,8 +1716,8 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 
   void _afterReadingValue() {
-    if (_stack.isNotEmpty) {
-      _stack.last.state = _ReaderItemState.afterValue;
+    if (_stackLength > 0) {
+      _topState = 2;
     } else {
       _hasReadRoot = true;
     }
@@ -1761,13 +1755,13 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   JsonTokenType peek() {
+    final _len = _bytes.length;
     var i = _offset;
-    while (i < _bytes.length && _isWs(_bytes[i])) {
+    while (i < _len && _isWs(_bytes[i])) {
       i++;
     }
-    if (i >= _bytes.length) {
-      if (_stack.isNotEmpty &&
-          _stack.last.state == _ReaderItemState.afterComma) {
+    if (i >= _len) {
+      if (_stackLength > 0 && _topState == 3) {
         throw FormatException(
           'Unexpected end of document after comma',
           _bytes,
@@ -1777,17 +1771,16 @@ final class _JsonTokenReader implements JsonTokenReader {
       return JsonTokenType.endOfDocument;
     }
 
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
-      if (top.type == _ContainerType.object) {
-        switch (top.state) {
-          case _ReaderItemState.start:
+    if (_stackLength > 0) {
+      if (_topType == 0) {
+        switch (_topState) {
+          case 0:
             if (_bytes[i] == 125) return JsonTokenType.endObject;
             if (_bytes[i] == 34) return JsonTokenType.propertyName;
             return JsonTokenType.none;
-          case _ReaderItemState.afterName:
+          case 1:
             return _valueTokenType(_bytes[i]);
-          case _ReaderItemState.afterComma:
+          case 3:
             if (_bytes[i] == 34) return JsonTokenType.propertyName;
             if (_bytes[i] == 125 || _bytes[i] == 93) {
               throw FormatException(
@@ -1797,14 +1790,14 @@ final class _JsonTokenReader implements JsonTokenReader {
               );
             }
             return JsonTokenType.none;
-          case _ReaderItemState.afterValue:
+          case 2:
             if (_bytes[i] == 125) return JsonTokenType.endObject;
             if (_bytes[i] == 44) {
               i++;
-              while (i < _bytes.length && _isWs(_bytes[i])) {
+              while (i < _len && _isWs(_bytes[i])) {
                 i++;
               }
-              if (i >= _bytes.length) {
+              if (i >= _len) {
                 throw FormatException(
                   'Unexpected end of document after comma',
                   _bytes,
@@ -1829,11 +1822,11 @@ final class _JsonTokenReader implements JsonTokenReader {
         }
       } else {
         // _ContainerType.array
-        switch (top.state) {
-          case _ReaderItemState.start:
+        switch (_topState) {
+          case 0:
             if (_bytes[i] == 93) return JsonTokenType.endArray;
             return _valueTokenType(_bytes[i]);
-          case _ReaderItemState.afterComma:
+          case 3:
             if (_bytes[i] == 93 || _bytes[i] == 125) {
               throw FormatException(
                 'Trailing comma before closing delimiter',
@@ -1842,14 +1835,14 @@ final class _JsonTokenReader implements JsonTokenReader {
               );
             }
             return _valueTokenType(_bytes[i]);
-          case _ReaderItemState.afterValue:
+          case 2:
             if (_bytes[i] == 93) return JsonTokenType.endArray;
             if (_bytes[i] == 44) {
               i++;
-              while (i < _bytes.length && _isWs(_bytes[i])) {
+              while (i < _len && _isWs(_bytes[i])) {
                 i++;
               }
-              if (i >= _bytes.length) {
+              if (i >= _len) {
                 throw FormatException(
                   'Unexpected end of document after comma',
                   _bytes,
@@ -1870,7 +1863,7 @@ final class _JsonTokenReader implements JsonTokenReader {
               _bytes,
               _offset,
             );
-          case _ReaderItemState.afterName:
+          case 1:
             return JsonTokenType.none;
         }
       }
@@ -1880,6 +1873,7 @@ final class _JsonTokenReader implements JsonTokenReader {
       }
       return _valueTokenType(_bytes[i]);
     }
+    throw StateError("unreachable");
   }
 
   @override
@@ -1887,14 +1881,22 @@ final class _JsonTokenReader implements JsonTokenReader {
     _beforeReadingValue();
     if (_offset < _bytes.length && _bytes[_offset] == 123) {
       _offset++;
-      if (_stack.length >= _maxDepth) {
+      if (_stackLength >= _maxDepth) {
         throw FormatException(
           'Nesting depth exceeds limit of $_maxDepth at offset $_offset',
         );
       }
-      _stack.add(
-        _ContainerFrame(_ContainerType.object, _ReaderItemState.start),
-      );
+      if (_stackLength > 0) {
+        if (_stackLength >= _stack.length) {
+          final newStack = Uint8List(_stack.length * 2);
+          newStack.setRange(0, _stack.length, _stack);
+          _stack = newStack;
+        }
+        _stack[_stackLength - 1] = (_topType << 2) | _topState;
+      }
+      _stackLength++;
+      _topType = 0;
+      _topState = 0;
     } else {
       throw FormatException('Expected "{" at offset $_offset');
     }
@@ -1903,20 +1905,28 @@ final class _JsonTokenReader implements JsonTokenReader {
   @override
   void endObject() {
     _skipWs();
-    if (_stack.isEmpty || _stack.last.type != _ContainerType.object) {
+    if (_stackLength == 0 || _topType != 0) {
       throw FormatException('Expected "}" at offset $_offset');
     }
-    if (_stack.last.state == _ReaderItemState.afterComma) {
+    if (_topState == 3) {
       throw FormatException('Trailing comma before "}" at offset $_offset');
     }
-    if (_stack.last.state == _ReaderItemState.afterName) {
+    if (_topState == 1) {
       throw FormatException(
         'Expected value after property name before "}" at offset $_offset',
       );
     }
     if (_offset < _bytes.length && _bytes[_offset] == 125) {
       _offset++;
-      _stack.removeLast();
+      _stackLength--;
+      if (_stackLength > 0) {
+        final packed = _stack[_stackLength - 1];
+        _topType = packed >> 2;
+        _topState = packed & 3;
+      } else {
+        _topType = -1;
+        _topState = 0;
+      }
       _afterReadingValue();
     } else {
       throw FormatException('Expected "}" at offset $_offset');
@@ -1928,12 +1938,22 @@ final class _JsonTokenReader implements JsonTokenReader {
     _beforeReadingValue();
     if (_offset < _bytes.length && _bytes[_offset] == 91) {
       _offset++;
-      if (_stack.length >= _maxDepth) {
+      if (_stackLength >= _maxDepth) {
         throw FormatException(
           'Nesting depth exceeds limit of $_maxDepth at offset $_offset',
         );
       }
-      _stack.add(_ContainerFrame(_ContainerType.array, _ReaderItemState.start));
+      if (_stackLength > 0) {
+        if (_stackLength >= _stack.length) {
+          final newStack = Uint8List(_stack.length * 2);
+          newStack.setRange(0, _stack.length, _stack);
+          _stack = newStack;
+        }
+        _stack[_stackLength - 1] = (_topType << 2) | _topState;
+      }
+      _stackLength++;
+      _topType = 1;
+      _topState = 0;
     } else {
       throw FormatException('Expected "[" at offset $_offset');
     }
@@ -1942,15 +1962,23 @@ final class _JsonTokenReader implements JsonTokenReader {
   @override
   void endArray() {
     _skipWs();
-    if (_stack.isEmpty || _stack.last.type != _ContainerType.array) {
+    if (_stackLength == 0 || _topType != 1) {
       throw FormatException('Expected "]" at offset $_offset');
     }
-    if (_stack.last.state == _ReaderItemState.afterComma) {
+    if (_topState == 3) {
       throw FormatException('Trailing comma before "]" at offset $_offset');
     }
     if (_offset < _bytes.length && _bytes[_offset] == 93) {
       _offset++;
-      _stack.removeLast();
+      _stackLength--;
+      if (_stackLength > 0) {
+        final packed = _stack[_stackLength - 1];
+        _topType = packed >> 2;
+        _topState = packed & 3;
+      } else {
+        _topType = -1;
+        _topState = 0;
+      }
       _afterReadingValue();
     } else {
       throw FormatException('Expected "]" at offset $_offset');
@@ -1961,16 +1989,18 @@ final class _JsonTokenReader implements JsonTokenReader {
   @pragma('wasm:prefer-inline')
   T _restoringOnError<T>(T Function() action) {
     final initialOffset = _offset;
-    final initialFrameState = _stack.isNotEmpty ? _stack.last.state : null;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
     final hadReadRoot = _hasReadRoot;
     try {
       return action();
     } catch (_) {
       _offset = initialOffset;
+      _stackLength = initialStackLen;
+      _topType = initialTopType;
+      _topState = initialTopState;
       _hasReadRoot = hadReadRoot;
-      if (_stack.isNotEmpty && initialFrameState != null) {
-        _stack.last.state = initialFrameState;
-      }
       rethrow;
     }
   }
@@ -1978,12 +2008,11 @@ final class _JsonTokenReader implements JsonTokenReader {
   @override
   bool hasNext() => _restoringOnError(() {
     _skipWs();
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
-      final closeChar = top.type == _ContainerType.object ? 125 : 93;
-      final closeStr = top.type == _ContainerType.object ? '"}"' : '"]"';
+    if (_stackLength > 0) {
+      final closeChar = _topType == 0 ? 125 : 93;
+      final closeStr = _topType == 0 ? '"}"' : '"]"';
 
-      if (top.state == _ReaderItemState.afterComma) {
+      if (_topState == 3) {
         if (_offset >= _bytes.length) {
           throw FormatException(
             'Unexpected end of document after comma',
@@ -1997,20 +2026,20 @@ final class _JsonTokenReader implements JsonTokenReader {
           );
         }
         return true;
-      } else if (top.state == _ReaderItemState.start) {
+      } else if (_topState == 0) {
         if (_offset >= _bytes.length) return false;
         if (_bytes[_offset] == closeChar) {
           return false;
         }
         return true;
-      } else if (top.state == _ReaderItemState.afterValue) {
+      } else if (_topState == 2) {
         if (_offset >= _bytes.length) return false;
         if (_bytes[_offset] == closeChar) {
           return false;
         }
         if (_bytes[_offset] == 44) {
           _offset++;
-          top.state = _ReaderItemState.afterComma;
+          _topState = 3;
           _skipWs();
           if (_offset >= _bytes.length) {
             throw FormatException(
@@ -2027,7 +2056,7 @@ final class _JsonTokenReader implements JsonTokenReader {
           return true;
         }
         throw FormatException('Expected "," or $closeStr at offset $_offset');
-      } else if (top.state == _ReaderItemState.afterName) {
+      } else if (_topState == 1) {
         if (_offset >= _bytes.length) {
           throw FormatException(
             'Unexpected end of document after property name',
@@ -2086,7 +2115,7 @@ final class _JsonTokenReader implements JsonTokenReader {
       i++;
     }
     _offset = i;
-    _stack.last.state = _ReaderItemState.afterName;
+    _topState = 1;
     return (start, end);
   }
 
@@ -2180,17 +2209,16 @@ final class _JsonTokenReader implements JsonTokenReader {
     while (j < _bytes.length && _isWs(_bytes[j])) {
       j++;
     }
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
+    if (_stackLength > 0) {
       if (j < _bytes.length && _bytes[j] == 44) {
         j++;
         while (j < _bytes.length && _isWs(_bytes[j])) {
           j++;
         }
-        top.state = _ReaderItemState.afterComma;
+        _topState = 3;
         _offset = j;
       } else {
-        top.state = _ReaderItemState.afterValue;
+        _topState = 2;
         _offset = j;
       }
     } else {
@@ -2236,17 +2264,16 @@ final class _JsonTokenReader implements JsonTokenReader {
     while (j < _bytes.length && _isWs(_bytes[j])) {
       j++;
     }
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
+    if (_stackLength > 0) {
       if (j < _bytes.length && _bytes[j] == 44) {
         j++;
         while (j < _bytes.length && _isWs(_bytes[j])) {
           j++;
         }
-        top.state = _ReaderItemState.afterComma;
+        _topState = 3;
         _offset = j;
       } else {
-        top.state = _ReaderItemState.afterValue;
+        _topState = 2;
         _offset = j;
       }
     } else {
@@ -2285,17 +2312,16 @@ final class _JsonTokenReader implements JsonTokenReader {
     while (j < _bytes.length && _isWs(_bytes[j])) {
       j++;
     }
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
+    if (_stackLength > 0) {
       if (j < _bytes.length && _bytes[j] == 44) {
         j++;
         while (j < _bytes.length && _isWs(_bytes[j])) {
           j++;
         }
-        top.state = _ReaderItemState.afterComma;
+        _topState = 3;
         _offset = j;
       } else {
-        top.state = _ReaderItemState.afterValue;
+        _topState = 2;
         _offset = j;
       }
     } else {
@@ -2366,17 +2392,16 @@ final class _JsonTokenReader implements JsonTokenReader {
     while (j < _bytes.length && _isWs(_bytes[j])) {
       j++;
     }
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
+    if (_stackLength > 0) {
       if (j < _bytes.length && _bytes[j] == 44) {
         j++;
         while (j < _bytes.length && _isWs(_bytes[j])) {
           j++;
         }
-        top.state = _ReaderItemState.afterComma;
+        _topState = 3;
         _offset = j;
       } else {
-        top.state = _ReaderItemState.afterValue;
+        _topState = 2;
         _offset = j;
       }
     } else {
@@ -2400,7 +2425,6 @@ final class _JsonTokenReader implements JsonTokenReader {
     final start = i;
     var isNegative = false;
     if (_bytes[i] == 45) {
-      // '-'
       isNegative = true;
       i++;
       if (i >= _bytes.length) {
@@ -2416,7 +2440,6 @@ final class _JsonTokenReader implements JsonTokenReader {
     // Integer part
     final firstDigit = _bytes[i];
     if (firstDigit == 48) {
-      // '0'
       i++;
       if (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
         throw FormatException(
@@ -2426,7 +2449,6 @@ final class _JsonTokenReader implements JsonTokenReader {
         );
       }
     } else if (firstDigit >= 49 && firstDigit <= 57) {
-      // '1'..'9'
       while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
         if (digitCount < 19) {
           mantissa = mantissa * 10 + (_bytes[i] - 48);
@@ -2443,7 +2465,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
     // Fraction part (optional)
     if (i < _bytes.length && _bytes[i] == 46) {
-      // '.'
       i++;
       if (i >= _bytes.length || _bytes[i] < 48 || _bytes[i] > 57) {
         throw FormatException('Expected digit after decimal point', _bytes, i);
@@ -2464,7 +2485,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
     // Exponent part (optional)
     if (i < _bytes.length && (_bytes[i] == 101 || _bytes[i] == 69)) {
-      // 'e' or 'E'
       i++;
       var expNeg = false;
       if (i < _bytes.length && (_bytes[i] == 43 || _bytes[i] == 45)) {
@@ -2486,16 +2506,10 @@ final class _JsonTokenReader implements JsonTokenReader {
       }
       decimalExp += expNeg ? -explicitExp : explicitExp;
       if (expSaturated) {
-        // The exponent has more digits than can matter. Dropping them lets the
-        // mantissa digit count cancel the truncated value back into the
-        // Eisel-Lemire window, which turns an underflow or overflow into a
-        // confident finite result. Pin it outside the window instead so the
-        // platform parser produces the 0 or Infinity.
         decimalExp = expNeg ? -100000 : 100000;
       }
     }
 
-    // Delimiter check: next byte must be EOF, ',', '}', ']', or whitespace
     if (i < _bytes.length) {
       final b = _bytes[i];
       if (b != 44 && b != 125 && b != 93 && !_isWs(b)) {
@@ -2513,17 +2527,16 @@ final class _JsonTokenReader implements JsonTokenReader {
     while (j < _bytes.length && _isWs(_bytes[j])) {
       j++;
     }
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
+    if (_stackLength > 0) {
       if (j < _bytes.length && _bytes[j] == 44) {
         j++;
         while (j < _bytes.length && _isWs(_bytes[j])) {
           j++;
         }
-        top.state = _ReaderItemState.afterComma;
+        _topState = 3;
         _offset = j;
       } else {
-        top.state = _ReaderItemState.afterValue;
+        _topState = 2;
         _offset = j;
       }
     } else {
@@ -2531,19 +2544,16 @@ final class _JsonTokenReader implements JsonTokenReader {
       _offset = j;
     }
 
-    // Zero mantissa fast path (preserves -0.0)
     if (mantissa == 0) {
       return isNegative ? -0.0 : 0.0;
     }
 
-    // Exponent-zero integer bypass (exact up to 53 bits)
     if (decimalExp == 0 &&
         !truncatedDigits &&
         _unsignedLe(mantissa, 0x001FFFFFFFFFFFFF)) {
       return isNegative ? -mantissa.toDouble() : mantissa.toDouble();
     }
 
-    // Eisel-Lemire 64-bit float parser
     var result = _tryParseDoubleFastEiselLemire(
       mantissa,
       decimalExp,
@@ -2561,7 +2571,6 @@ final class _JsonTokenReader implements JsonTokenReader {
     }
     if (result != null) return result;
 
-    // Fallback
     return _parseDoubleFromBytes(_bytes, start, end);
   });
 
@@ -2589,9 +2598,7 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   void skipValue() => _restoringOnError(() {
-    if (_stack.isNotEmpty &&
-        _stack.last.type == _ContainerType.object &&
-        _stack.last.state != _ReaderItemState.afterName) {
+    if (_stackLength > 0 && _topType == 0 && _topState != 1) {
       _scanNameSpanAndConsumeColon();
       skipValue();
       return;
@@ -2622,9 +2629,8 @@ final class _JsonTokenReader implements JsonTokenReader {
     while (i < _bytes.length && _isWs(_bytes[i])) {
       i++;
     }
-    if (_stack.isNotEmpty) {
-      final state = _stack.last.state;
-      if (state == _ReaderItemState.afterValue) {
+    if (_stackLength > 0) {
+      if (_topState == 2) {
         if (i < _bytes.length && _bytes[i] == 44) {
           i++;
           while (i < _bytes.length && _isWs(_bytes[i])) {
@@ -2645,9 +2651,8 @@ final class _JsonTokenReader implements JsonTokenReader {
             );
           }
         } else {
-          final top = _stack.last;
-          final closeChar = top.type == _ContainerType.object ? 125 : 93;
-          final closeStr = top.type == _ContainerType.object ? '"}"' : '"]"';
+          final closeChar = _topType == 0 ? 125 : 93;
+          final closeStr = _topType == 0 ? '"}"' : '"]"';
           if (i < _bytes.length && _bytes[i] != closeChar) {
             throw FormatException(
               'Expected "," or $closeStr at offset $i',
@@ -2656,7 +2661,7 @@ final class _JsonTokenReader implements JsonTokenReader {
             );
           }
         }
-      } else if (state == _ReaderItemState.afterComma) {
+      } else if (_topState == 3) {
         if (i >= _bytes.length) {
           throw FormatException(
             'Unexpected end of document after comma',

@@ -3075,8 +3075,7 @@ class _JsonTokenReader {
       i++;
     }
     if (i >= _len) {
-      if (_stack.isNotEmpty &&
-          _stack.last.state == _ReaderItemState.afterComma) {
+      if (_stackLength > 0 && _topState == 3) {
         throw FormatException(
           'Unexpected end of document after comma',
           _bytes,
@@ -3086,17 +3085,16 @@ class _JsonTokenReader {
       return JsonTokenType.endOfDocument;
     }
 
-    if (_stack.isNotEmpty) {
-      final top = _stack.last;
-      if (top.type == _ContainerType.object) {
-        switch (top.state) {
-          case _ReaderItemState.start:
+    if (_stackLength > 0) {
+      if (_topType == 0) {
+        switch (_topState) {
+          case 0:
             if (_b(i) == 125) return JsonTokenType.endObject;
             if (_b(i) == 34) return JsonTokenType.propertyName;
             return JsonTokenType.none;
-          case _ReaderItemState.afterName:
+          case 1:
             return _valueTokenType(_b(i));
-          case _ReaderItemState.afterComma:
+          case 3:
             if (_b(i) == 34) return JsonTokenType.propertyName;
             if (_b(i) == 125 || _b(i) == 93) {
               throw FormatException(
@@ -3106,7 +3104,7 @@ class _JsonTokenReader {
               );
             }
             return JsonTokenType.none;
-          case _ReaderItemState.afterValue:
+          case 2:
             if (_b(i) == 125) return JsonTokenType.endObject;
             if (_b(i) == 44) {
               i++;
@@ -3138,11 +3136,11 @@ class _JsonTokenReader {
         }
       } else {
         // _ContainerType.array
-        switch (top.state) {
-          case _ReaderItemState.start:
+        switch (_topState) {
+          case 0:
             if (_b(i) == 93) return JsonTokenType.endArray;
             return _valueTokenType(_b(i));
-          case _ReaderItemState.afterComma:
+          case 3:
             if (_b(i) == 93 || _b(i) == 125) {
               throw FormatException(
                 'Trailing comma before closing delimiter',
@@ -3151,7 +3149,7 @@ class _JsonTokenReader {
               );
             }
             return _valueTokenType(_b(i));
-          case _ReaderItemState.afterValue:
+          case 2:
             if (_b(i) == 93) return JsonTokenType.endArray;
             if (_b(i) == 44) {
               i++;
@@ -3179,7 +3177,7 @@ class _JsonTokenReader {
               _bytes,
               _offset,
             );
-          case _ReaderItemState.afterName:
+          case 1:
             return JsonTokenType.none;
         }
       }
@@ -3189,17 +3187,16 @@ class _JsonTokenReader {
       }
       return _valueTokenType(_b(i));
     }
+    throw StateError("unreachable");
   }
 
   @patch
   (int, int) _scanNameSpanAndConsumeColon() {
     final _len = _bytes.length;
     final prevOffset = _offset;
-    final prevStackLen = _stack.length;
-    _ReaderItemState? prevTopState;
-    if (_stack.isNotEmpty) {
-      prevTopState = _stack.last.state;
-    }
+    final prevStackLen = _stackLength;
+    final prevTopType = _topType;
+    final prevTopState = _topState;
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingName();
@@ -3230,16 +3227,13 @@ class _JsonTokenReader {
         i++;
       }
       _offset = i;
-      _stack.last.state = _ReaderItemState.afterName;
+      _topState = 1;
       return (start, end);
     } catch (_) {
       _offset = prevOffset;
-      if (_stack.length > prevStackLen) {
-        _stack.length = prevStackLen;
-      }
-      if (_stack.isNotEmpty && prevTopState != null) {
-        _stack.last.state = prevTopState;
-      }
+      _stackLength = prevStackLen;
+      _topType = prevTopType;
+      _topState = prevTopState;
       _hasReadRoot = prevHasReadRoot;
       rethrow;
     }
@@ -3255,11 +3249,9 @@ class _JsonTokenReader {
   (int, int) readStringSpan() {
     final _len = _bytes.length;
     final prevOffset = _offset;
-    final prevStackLen = _stack.length;
-    _ReaderItemState? prevTopState;
-    if (_stack.isNotEmpty) {
-      prevTopState = _stack.last.state;
-    }
+    final prevStackLen = _stackLength;
+    final prevTopType = _topType;
+    final prevTopState = _topState;
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingValue();
@@ -3278,17 +3270,16 @@ class _JsonTokenReader {
       while (j < _len && _isWs(_b(j))) {
         j++;
       }
-      if (_stack.isNotEmpty) {
-        final top = _stack.last;
+      if (_stackLength > 0) {
         if (j < _len && _b(j) == 44) {
           j++;
           while (j < _len && _isWs(_b(j))) {
             j++;
           }
-          top.state = _ReaderItemState.afterComma;
+          _topState = 3;
           _offset = j;
         } else {
-          top.state = _ReaderItemState.afterValue;
+          _topState = 2;
           _offset = j;
         }
       } else {
@@ -3299,12 +3290,9 @@ class _JsonTokenReader {
       return (start, end);
     } catch (_) {
       _offset = prevOffset;
-      if (_stack.length > prevStackLen) {
-        _stack.length = prevStackLen;
-      }
-      if (_stack.isNotEmpty && prevTopState != null) {
-        _stack.last.state = prevTopState;
-      }
+      _stackLength = prevStackLen;
+      _topType = prevTopType;
+      _topState = prevTopState;
       _hasReadRoot = prevHasReadRoot;
       rethrow;
     }
@@ -3320,11 +3308,9 @@ class _JsonTokenReader {
   int selectString(JsonKeyOptions options) {
     final _len = _bytes.length;
     final prevOffset = _offset;
-    final prevStackLen = _stack.length;
-    _ReaderItemState? prevTopState;
-    if (_stack.isNotEmpty) {
-      prevTopState = _stack.last.state;
-    }
+    final prevStackLen = _stackLength;
+    final prevTopType = _topType;
+    final prevTopState = _topState;
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingValue();
@@ -3343,17 +3329,16 @@ class _JsonTokenReader {
       while (j < _len && _isWs(_b(j))) {
         j++;
       }
-      if (_stack.isNotEmpty) {
-        final top = _stack.last;
+      if (_stackLength > 0) {
         if (j < _len && _b(j) == 44) {
           j++;
           while (j < _len && _isWs(_b(j))) {
             j++;
           }
-          top.state = _ReaderItemState.afterComma;
+          _topState = 3;
           _offset = j;
         } else {
-          top.state = _ReaderItemState.afterValue;
+          _topState = 2;
           _offset = j;
         }
       } else {
@@ -3379,12 +3364,9 @@ class _JsonTokenReader {
       return options.keys.indexOf(unescaped);
     } catch (_) {
       _offset = prevOffset;
-      if (_stack.length > prevStackLen) {
-        _stack.length = prevStackLen;
-      }
-      if (_stack.isNotEmpty && prevTopState != null) {
-        _stack.last.state = prevTopState;
-      }
+      _stackLength = prevStackLen;
+      _topType = prevTopType;
+      _topState = prevTopState;
       _hasReadRoot = prevHasReadRoot;
       rethrow;
     }
@@ -3394,11 +3376,9 @@ class _JsonTokenReader {
   int selectName(JsonKeyOptions options) {
     final _len = _bytes.length;
     final prevOffset = _offset;
-    final prevStackLen = _stack.length;
-    _ReaderItemState? prevTopState;
-    if (_stack.isNotEmpty) {
-      prevTopState = _stack.last.state;
-    }
+    final prevStackLen = _stackLength;
+    final prevTopType = _topType;
+    final prevTopState = _topState;
     final prevHasReadRoot = _hasReadRoot;
     try {
       final (start, end) = _scanNameSpanAndConsumeColon();
@@ -3421,12 +3401,9 @@ class _JsonTokenReader {
       return options.keys.indexOf(unescaped);
     } catch (_) {
       _offset = prevOffset;
-      if (_stack.length > prevStackLen) {
-        _stack.length = prevStackLen;
-      }
-      if (_stack.isNotEmpty && prevTopState != null) {
-        _stack.last.state = prevTopState;
-      }
+      _stackLength = prevStackLen;
+      _topType = prevTopType;
+      _topState = prevTopState;
       _hasReadRoot = prevHasReadRoot;
       rethrow;
     }
@@ -3436,11 +3413,9 @@ class _JsonTokenReader {
   int readInt() {
     final _len = _bytes.length;
     final prevOffset = _offset;
-    final prevStackLen = _stack.length;
-    _ReaderItemState? prevTopState;
-    if (_stack.isNotEmpty) {
-      prevTopState = _stack.last.state;
-    }
+    final prevStackLen = _stackLength;
+    final prevTopType = _topType;
+    final prevTopState = _topState;
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingValue();
@@ -3502,17 +3477,16 @@ class _JsonTokenReader {
       while (j < _len && _isWs(_b(j))) {
         j++;
       }
-      if (_stack.isNotEmpty) {
-        final top = _stack.last;
+      if (_stackLength > 0) {
         if (j < _len && _b(j) == 44) {
           j++;
           while (j < _len && _isWs(_b(j))) {
             j++;
           }
-          top.state = _ReaderItemState.afterComma;
+          _topState = 3;
           _offset = j;
         } else {
-          top.state = _ReaderItemState.afterValue;
+          _topState = 2;
           _offset = j;
         }
       } else {
@@ -3523,12 +3497,9 @@ class _JsonTokenReader {
       return val;
     } catch (_) {
       _offset = prevOffset;
-      if (_stack.length > prevStackLen) {
-        _stack.length = prevStackLen;
-      }
-      if (_stack.isNotEmpty && prevTopState != null) {
-        _stack.last.state = prevTopState;
-      }
+      _stackLength = prevStackLen;
+      _topType = prevTopType;
+      _topState = prevTopState;
       _hasReadRoot = prevHasReadRoot;
       rethrow;
     }
@@ -3538,11 +3509,9 @@ class _JsonTokenReader {
   double readDouble() {
     final _len = _bytes.length;
     final prevOffset = _offset;
-    final prevStackLen = _stack.length;
-    _ReaderItemState? prevTopState;
-    if (_stack.isNotEmpty) {
-      prevTopState = _stack.last.state;
-    }
+    final prevStackLen = _stackLength;
+    final prevTopType = _topType;
+    final prevTopState = _topState;
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingValue();
@@ -3556,7 +3525,6 @@ class _JsonTokenReader {
       final start = i;
       var isNegative = false;
       if (_b(i) == 45) {
-        // '-'
         isNegative = true;
         i++;
         if (i >= _len) {
@@ -3569,10 +3537,8 @@ class _JsonTokenReader {
       int decimalExp = 0;
       bool truncatedDigits = false;
 
-      // Integer part
       final firstDigit = _b(i);
       if (firstDigit == 48) {
-        // '0'
         i++;
         if (i < _len && _b(i) >= 48 && _b(i) <= 57) {
           throw FormatException(
@@ -3582,7 +3548,6 @@ class _JsonTokenReader {
           );
         }
       } else if (firstDigit >= 49 && firstDigit <= 57) {
-        // '1'..'9'
         while (i < _len && _b(i) >= 48 && _b(i) <= 57) {
           if (digitCount < 19) {
             mantissa = mantissa * 10 + (_b(i) - 48);
@@ -3597,9 +3562,7 @@ class _JsonTokenReader {
         throw FormatException('Expected digit in number', _bytes, i);
       }
 
-      // Fraction part (optional)
       if (i < _len && _b(i) == 46) {
-        // '.'
         i++;
         if (i >= _len || _b(i) < 48 || _b(i) > 57) {
           throw FormatException(
@@ -3622,9 +3585,7 @@ class _JsonTokenReader {
         }
       }
 
-      // Exponent part (optional)
       if (i < _len && (_b(i) == 101 || _b(i) == 69)) {
-        // 'e' or 'E'
         i++;
         var expNeg = false;
         if (i < _len && (_b(i) == 43 || _b(i) == 45)) {
@@ -3646,16 +3607,10 @@ class _JsonTokenReader {
         }
         decimalExp += expNeg ? -explicitExp : explicitExp;
         if (expSaturated) {
-          // The exponent has more digits than can matter. Dropping them lets the
-          // mantissa digit count cancel the truncated value back into the
-          // Eisel-Lemire window, which turns an underflow or overflow into a
-          // confident finite result. Pin it outside the window instead so the
-          // platform parser produces the 0 or Infinity.
           decimalExp = expNeg ? -100000 : 100000;
         }
       }
 
-      // Delimiter check: next byte must be EOF, ',', '}', ']', or whitespace
       if (i < _len) {
         final b = _b(i);
         if (b != 44 && b != 125 && b != 93 && !_isWs(b)) {
@@ -3673,17 +3628,16 @@ class _JsonTokenReader {
       while (j < _len && _isWs(_b(j))) {
         j++;
       }
-      if (_stack.isNotEmpty) {
-        final top = _stack.last;
+      if (_stackLength > 0) {
         if (j < _len && _b(j) == 44) {
           j++;
           while (j < _len && _isWs(_b(j))) {
             j++;
           }
-          top.state = _ReaderItemState.afterComma;
+          _topState = 3;
           _offset = j;
         } else {
-          top.state = _ReaderItemState.afterValue;
+          _topState = 2;
           _offset = j;
         }
       } else {
@@ -3691,19 +3645,16 @@ class _JsonTokenReader {
         _offset = j;
       }
 
-      // Zero mantissa fast path (preserves -0.0)
       if (mantissa == 0) {
         return isNegative ? -0.0 : 0.0;
       }
 
-      // Exponent-zero integer bypass (exact up to 53 bits)
       if (decimalExp == 0 &&
           !truncatedDigits &&
           _unsignedLe(mantissa, 0x001FFFFFFFFFFFFF)) {
         return isNegative ? -mantissa.toDouble() : mantissa.toDouble();
       }
 
-      // Eisel-Lemire 64-bit float parser
       var result = _tryParseDoubleFastEiselLemire(
         mantissa,
         decimalExp,
@@ -3721,16 +3672,12 @@ class _JsonTokenReader {
       }
       if (result != null) return result;
 
-      // Fallback
       return _parseDoubleFromBytes(_bytes, start, end);
     } catch (_) {
       _offset = prevOffset;
-      if (_stack.length > prevStackLen) {
-        _stack.length = prevStackLen;
-      }
-      if (_stack.isNotEmpty && prevTopState != null) {
-        _stack.last.state = prevTopState;
-      }
+      _stackLength = prevStackLen;
+      _topType = prevTopType;
+      _topState = prevTopState;
       _hasReadRoot = prevHasReadRoot;
       rethrow;
     }
