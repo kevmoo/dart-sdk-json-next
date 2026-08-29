@@ -1593,8 +1593,6 @@ abstract interface class JsonTokenReader {
 
 enum _ContainerType { object, array }
 
-enum _ReaderItemState { start, afterName, afterValue, afterComma }
-
 final class _JsonTokenReader implements JsonTokenReader {
   static const int _maxDepth = 1024;
   static const int _stringCacheSize = 128;
@@ -2505,6 +2503,8 @@ final class _JsonTokenReader implements JsonTokenReader {
         i++;
       }
       decimalExp += expNeg ? -explicitExp : explicitExp;
+      // Clamp extreme exponents to ±100,000 to prevent integer overflow while
+      // preserving exact zero/infinite float scaling during fast-path parsing.
       if (expSaturated) {
         decimalExp = expNeg ? -100000 : 100000;
       }
