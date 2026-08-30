@@ -2721,8 +2721,6 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 }
 
-enum _ObjectState { empty, key, value }
-
 /// High-performance push-based JSON token writer.
 ///
 /// Enforces a maximum structural nesting depth limit of 1,024 levels of nested
@@ -2758,9 +2756,11 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
   Uint8List _buffer = Uint8List(_chunkSize);
   int _cursor = 0;
 
-  final List<_ContainerType> _stateStack = [];
-  final List<_ObjectState> _objectStateStack = [];
-  final List<bool> _isArrayFirstStack = [];
+  Uint8List _typeStack = Uint8List(64);
+  Uint8List _stateStack = Uint8List(64);
+  int _stackLength = 0;
+  int _topType = -1; // -1: none, 0: object, 1: array
+  int _topState = 0; // in object: 0: empty, 1: key, 2: value; in array: 0: first, 1: not first
   bool _hasRootValue = false;
 
   JsonUtf8TokenWriter(this._sink);
@@ -2793,18 +2793,17 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
   void flush() => _flushBuffer();
 
   void _beforeValue() {
-    if (_stateStack.isNotEmpty) {
-      final inObject = _stateStack.last == _ContainerType.object;
-      if (inObject) {
-        if (_objectStateStack.last != _ObjectState.key) {
+    if (_stackLength > 0) {
+      if (_topType == 0) {
+        if (_topState != 1) {
           throw StateError('Expected property name before value in object');
         }
-        _objectStateStack.last = _ObjectState.value;
+        _topState = 2;
       } else {
-        if (!_isArrayFirstStack.last) {
+        if (_topState != 0) {
           _writeDirectByte(44); // ','
         }
-        _isArrayFirstStack.last = false;
+        _topState = 1;
       }
     } else {
       if (_hasRootValue) {
@@ -2816,70 +2815,105 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
 
   @override
   void beginObject() {
-    if (_stateStack.length >= _maxDepth) {
+    if (_stackLength >= _maxDepth) {
       throw StateError('Nesting depth exceeds limit of $_maxDepth');
     }
     _beforeValue();
     _writeDirectByte(123); // '{'
-    _stateStack.add(_ContainerType.object);
-    _objectStateStack.add(_ObjectState.empty);
+    if (_stackLength > 0) {
+      if (_stackLength >= _typeStack.length) {
+        final newCap = _typeStack.length * 2;
+        final newTypeStack = Uint8List(newCap);
+        newTypeStack.setRange(0, _typeStack.length, _typeStack);
+        _typeStack = newTypeStack;
+        final newStateStack = Uint8List(newCap);
+        newStateStack.setRange(0, _stateStack.length, _stateStack);
+        _stateStack = newStateStack;
+      }
+      _typeStack[_stackLength - 1] = _topType;
+      _stateStack[_stackLength - 1] = _topState;
+    }
+    _stackLength++;
+    _topType = 0;
+    _topState = 0;
   }
 
   @override
   void endObject() {
-    if (_stateStack.isEmpty || _stateStack.last != _ContainerType.object) {
+    if (_stackLength == 0 || _topType != 0) {
       throw StateError('Cannot endObject: not inside an object');
     }
-    if (_objectStateStack.last == _ObjectState.key) {
+    if (_topState == 1) {
       throw StateError('Cannot endObject: expected value after property name');
     }
     _writeDirectByte(125); // '}'
-    _stateStack.removeLast();
-    _objectStateStack.removeLast();
-    if (_stateStack.isEmpty) {
+    _stackLength--;
+    if (_stackLength > 0) {
+      _topType = _typeStack[_stackLength - 1];
+      _topState = _stateStack[_stackLength - 1];
+    } else {
+      _topType = -1;
+      _topState = 0;
       _flushBuffer();
     }
   }
 
   @override
   void beginArray() {
-    if (_stateStack.length >= _maxDepth) {
+    if (_stackLength >= _maxDepth) {
       throw StateError('Nesting depth exceeds limit of $_maxDepth');
     }
     _beforeValue();
     _writeDirectByte(91); // '['
-    _stateStack.add(_ContainerType.array);
-    _isArrayFirstStack.add(true);
+    if (_stackLength > 0) {
+      if (_stackLength >= _typeStack.length) {
+        final newCap = _typeStack.length * 2;
+        final newTypeStack = Uint8List(newCap);
+        newTypeStack.setRange(0, _typeStack.length, _typeStack);
+        _typeStack = newTypeStack;
+        final newStateStack = Uint8List(newCap);
+        newStateStack.setRange(0, _stateStack.length, _stateStack);
+        _stateStack = newStateStack;
+      }
+      _typeStack[_stackLength - 1] = _topType;
+      _stateStack[_stackLength - 1] = _topState;
+    }
+    _stackLength++;
+    _topType = 1;
+    _topState = 0;
   }
 
   @override
   void endArray() {
-    if (_stateStack.isEmpty || _stateStack.last != _ContainerType.array) {
+    if (_stackLength == 0 || _topType != 1) {
       throw StateError('Cannot endArray: not inside an array');
     }
     _writeDirectByte(93); // ']'
-    _stateStack.removeLast();
-    _isArrayFirstStack.removeLast();
-    if (_stateStack.isEmpty) {
+    _stackLength--;
+    if (_stackLength > 0) {
+      _topType = _typeStack[_stackLength - 1];
+      _topState = _stateStack[_stackLength - 1];
+    } else {
+      _topType = -1;
+      _topState = 0;
       _flushBuffer();
     }
   }
 
   @override
   void writeName(String name) {
-    if (_stateStack.isEmpty || _stateStack.last != _ContainerType.object) {
+    if (_stackLength == 0 || _topType != 0) {
       throw StateError('Cannot writeName: not inside an object');
     }
-    final objState = _objectStateStack.last;
-    if (objState == _ObjectState.key) {
+    if (_topState == 1) {
       throw StateError(
         'Cannot writeName: already expecting a value for previous property',
       );
     }
-    if (objState == _ObjectState.value) {
+    if (_topState == 2) {
       _writeDirectByte(44); // ','
     }
-    _objectStateStack.last = _ObjectState.key;
+    _topState = 1;
     final len = name.length;
     if (len <= 32) {
       var isAscii = true;
@@ -2909,19 +2943,18 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
 
   @override
   void writeNameBytes(Uint8List asciiKey) {
-    if (_stateStack.isEmpty || _stateStack.last != _ContainerType.object) {
+    if (_stackLength == 0 || _topType != 0) {
       throw StateError('Cannot writeNameBytes: not inside an object');
     }
-    final objState = _objectStateStack.last;
-    if (objState == _ObjectState.key) {
+    if (_topState == 1) {
       throw StateError(
         'Cannot writeNameBytes: already expecting a value for previous property',
       );
     }
-    if (objState == _ObjectState.value) {
+    if (_topState == 2) {
       _writeDirectByte(44); // ','
     }
-    _objectStateStack.last = _ObjectState.key;
+    _topState = 1;
     final isColonTerminated =
         asciiKey.length >= 3 &&
         asciiKey.first == 0x22 &&
@@ -2975,7 +3008,7 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
     _ensureCapacity(len);
     _buffer.setRange(_cursor, _cursor + len, preEncoded);
     _cursor += len;
-    if (_stateStack.isEmpty) {
+    if (_stackLength == 0) {
       _flushBuffer();
     }
   }
@@ -2987,7 +3020,7 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
     _ensureCapacity(len);
     _buffer.setRange(_cursor, _cursor + len, rawJson);
     _cursor += len;
-    if (_stateStack.isEmpty) {
+    if (_stackLength == 0) {
       _flushBuffer();
     }
   }
@@ -3012,7 +3045,7 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
           _buffer[_cursor++] = value.codeUnitAt(i);
         }
         _buffer[_cursor++] = 0x22; // '"'
-        if (_stateStack.isEmpty) {
+        if (_stackLength == 0) {
           _flushBuffer();
         }
         return;
@@ -3021,7 +3054,7 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
     _ensureCapacity(len * 6 + 2);
     final written = _writeStringToBuffer(value, _buffer, _cursor);
     _cursor += written;
-    if (_stateStack.isEmpty) {
+    if (_stackLength == 0) {
       _flushBuffer();
     }
   }
@@ -3032,7 +3065,7 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
     _ensureCapacity(24);
     final written = _writeIntToBuffer(value, _buffer, _cursor);
     _cursor += written;
-    if (_stateStack.isEmpty) {
+    if (_stackLength == 0) {
       _flushBuffer();
     }
   }
@@ -3043,7 +3076,7 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
     _ensureCapacity(32);
     final written = _writeDoubleToBuffer(value, _buffer, _cursor);
     _cursor += written;
-    if (_stateStack.isEmpty) {
+    if (_stackLength == 0) {
       _flushBuffer();
     }
   }
@@ -3065,7 +3098,7 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
       _buffer[_cursor++] = 115; // 's'
       _buffer[_cursor++] = 101; // 'e'
     }
-    if (_stateStack.isEmpty) {
+    if (_stackLength == 0) {
       _flushBuffer();
     }
   }
@@ -3078,7 +3111,7 @@ final class JsonUtf8TokenWriter implements JsonTokenWriter {
     _buffer[_cursor++] = 117; // 'u'
     _buffer[_cursor++] = 108; // 'l'
     _buffer[_cursor++] = 108; // 'l'
-    if (_stateStack.isEmpty) {
+    if (_stackLength == 0) {
       _flushBuffer();
     }
   }
