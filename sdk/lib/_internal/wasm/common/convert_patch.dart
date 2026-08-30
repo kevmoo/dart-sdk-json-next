@@ -2961,6 +2961,23 @@ class _JsonTokenReader {
     final d = _data;
     final base = _offsetInElements;
     var i = offset;
+
+    // Fast-path: 4-byte chunk unrolling for unescaped ASCII content
+    while (i + 4 <= len) {
+      final b0 = d.readUnsigned(base + i);
+      final b1 = d.readUnsigned(base + i + 1);
+      final b2 = d.readUnsigned(base + i + 2);
+      final b3 = d.readUnsigned(base + i + 3);
+      if (((b0 <= 34 || b0 == 92) |
+              (b1 <= 34 || b1 == 92) |
+              (b2 <= 34 || b2 == 92) |
+              (b3 <= 34 || b3 == 92)) !=
+          0) {
+        break;
+      }
+      i += 4;
+    }
+
     while (i < len) {
       final b = d.readUnsigned(base + i);
       if (b < 0x20) {
@@ -3019,8 +3036,13 @@ class _JsonTokenReader {
     }
 
     var h = len;
+    var isVerbatim = true;
     for (var i = start; i < end; i++) {
-      h = (h * 31 + d.readUnsigned(base + i)) & 0x3fffffff;
+      final b = d.readUnsigned(base + i);
+      if (b < 0x20 || b > 0x7E || b == 0x22 || b == 0x5C) {
+        isVerbatim = false;
+      }
+      h = (h * 31 + b) & 0x3fffffff;
     }
     final slot = h & _stringCacheMask;
     final cached = _stringCache[slot];
@@ -3039,7 +3061,7 @@ class _JsonTokenReader {
     }
 
     final String s;
-    if (_isVerbatimAscii(d, base + start, base + end)) {
+    if (isVerbatim) {
       s = _stringFromAsciiBytes(d, base + start, base + end);
     } else {
       s = _decodeStringUtf8(_bytes, start, end, allowMalformed: allowMalformed);
@@ -3070,8 +3092,10 @@ class _JsonTokenReader {
   @patch
   JsonTokenType peek() {
     final _len = _bytes.length;
+    final d = _data;
+    final base = _offsetInElements;
     var i = _offset;
-    while (i < _len && _isWs(_b(i))) {
+    while (i < _len && _isWs(d.readUnsigned(base + i))) {
       i++;
     }
     if (i >= _len) {
@@ -3085,18 +3109,19 @@ class _JsonTokenReader {
       return JsonTokenType.endOfDocument;
     }
 
+    final b = d.readUnsigned(base + i);
     if (_stackLength > 0) {
       if (_topType == 0) {
         switch (_topState) {
           case 0:
-            if (_b(i) == 125) return JsonTokenType.endObject;
-            if (_b(i) == 34) return JsonTokenType.propertyName;
+            if (b == 125) return JsonTokenType.endObject;
+            if (b == 34) return JsonTokenType.propertyName;
             return JsonTokenType.none;
           case 1:
-            return _valueTokenType(_b(i));
+            return _valueTokenType(b);
           case 3:
-            if (_b(i) == 34) return JsonTokenType.propertyName;
-            if (_b(i) == 125 || _b(i) == 93) {
+            if (b == 34) return JsonTokenType.propertyName;
+            if (b == 125 || b == 93) {
               throw FormatException(
                 'Trailing comma before closing delimiter',
                 _bytes,
@@ -3105,10 +3130,10 @@ class _JsonTokenReader {
             }
             return JsonTokenType.none;
           case 2:
-            if (_b(i) == 125) return JsonTokenType.endObject;
-            if (_b(i) == 44) {
+            if (b == 125) return JsonTokenType.endObject;
+            if (b == 44) {
               i++;
-              while (i < _len && _isWs(_b(i))) {
+              while (i < _len && _isWs(d.readUnsigned(base + i))) {
                 i++;
               }
               if (i >= _len) {
@@ -3118,14 +3143,15 @@ class _JsonTokenReader {
                   _offset,
                 );
               }
-              if (_b(i) == 125 || _b(i) == 93) {
+              final bNext = d.readUnsigned(base + i);
+              if (bNext == 125 || bNext == 93) {
                 throw FormatException(
                   'Trailing comma before closing delimiter',
                   _bytes,
                   _offset,
                 );
               }
-              if (_b(i) == 34) return JsonTokenType.propertyName;
+              if (bNext == 34) return JsonTokenType.propertyName;
               return JsonTokenType.none;
             }
             throw FormatException(
@@ -3138,22 +3164,22 @@ class _JsonTokenReader {
         // _ContainerType.array
         switch (_topState) {
           case 0:
-            if (_b(i) == 93) return JsonTokenType.endArray;
-            return _valueTokenType(_b(i));
+            if (b == 93) return JsonTokenType.endArray;
+            return _valueTokenType(b);
           case 3:
-            if (_b(i) == 93 || _b(i) == 125) {
+            if (b == 93 || b == 125) {
               throw FormatException(
                 'Trailing comma before closing delimiter',
                 _bytes,
                 _offset,
               );
             }
-            return _valueTokenType(_b(i));
+            return _valueTokenType(b);
           case 2:
-            if (_b(i) == 93) return JsonTokenType.endArray;
-            if (_b(i) == 44) {
+            if (b == 93) return JsonTokenType.endArray;
+            if (b == 44) {
               i++;
-              while (i < _len && _isWs(_b(i))) {
+              while (i < _len && _isWs(d.readUnsigned(base + i))) {
                 i++;
               }
               if (i >= _len) {
@@ -3163,14 +3189,15 @@ class _JsonTokenReader {
                   _offset,
                 );
               }
-              if (_b(i) == 93 || _b(i) == 125) {
+              final bNext = d.readUnsigned(base + i);
+              if (bNext == 93 || bNext == 125) {
                 throw FormatException(
                   'Trailing comma before closing delimiter',
                   _bytes,
                   _offset,
                 );
               }
-              return _valueTokenType(_b(i));
+              return _valueTokenType(bNext);
             }
             throw FormatException(
               'Expected comma or closing delimiter',
@@ -3185,7 +3212,7 @@ class _JsonTokenReader {
       if (_hasReadRoot) {
         return JsonTokenType.none;
       }
-      return _valueTokenType(_b(i));
+      return _valueTokenType(b);
     }
     throw StateError("unreachable");
   }
@@ -3200,11 +3227,13 @@ class _JsonTokenReader {
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingName();
+      final d = _data;
+      final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(_b(i))) {
+      while (i < _len && _isWs(d.readUnsigned(base + i))) {
         i++;
       }
-      if (i >= _len || _b(i) != 34) {
+      if (i >= _len || d.readUnsigned(base + i) != 34) {
         throw FormatException('Expected string at offset $i', _bytes, i);
       }
       final start = i + 1;
@@ -3212,18 +3241,18 @@ class _JsonTokenReader {
       i = end + 1;
 
       // Fused colon consumption & trailing whitespace
-      if (i < _len && _b(i) == 58) {
+      if (i < _len && d.readUnsigned(base + i) == 58) {
         i++;
       } else {
-        while (i < _len && _isWs(_b(i))) {
+        while (i < _len && _isWs(d.readUnsigned(base + i))) {
           i++;
         }
-        if (i >= _len || _b(i) != 58) {
+        if (i >= _len || d.readUnsigned(base + i) != 58) {
           throw FormatException('Expected ":" at offset $i', _bytes, i);
         }
         i++;
       }
-      while (i < _len && _isWs(_b(i))) {
+      while (i < _len && _isWs(d.readUnsigned(base + i))) {
         i++;
       }
       _offset = i;
@@ -3255,11 +3284,13 @@ class _JsonTokenReader {
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingValue();
+      final d = _data;
+      final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(_b(i))) {
+      while (i < _len && _isWs(d.readUnsigned(base + i))) {
         i++;
       }
-      if (i >= _len || _b(i) != 34) {
+      if (i >= _len || d.readUnsigned(base + i) != 34) {
         throw FormatException('Expected string at offset $i', _bytes, i);
       }
       final start = i + 1;
@@ -3267,13 +3298,13 @@ class _JsonTokenReader {
       i = end + 1;
 
       var j = i;
-      while (j < _len && _isWs(_b(j))) {
+      while (j < _len && _isWs(d.readUnsigned(base + j))) {
         j++;
       }
       if (_stackLength > 0) {
-        if (j < _len && _b(j) == 44) {
+        if (j < _len && d.readUnsigned(base + j) == 44) {
           j++;
-          while (j < _len && _isWs(_b(j))) {
+          while (j < _len && _isWs(d.readUnsigned(base + j))) {
             j++;
           }
           _topState = 3;
@@ -3314,11 +3345,13 @@ class _JsonTokenReader {
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingValue();
+      final d = _data;
+      final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(_b(i))) {
+      while (i < _len && _isWs(d.readUnsigned(base + i))) {
         i++;
       }
-      if (i >= _len || _b(i) != 34) {
+      if (i >= _len || d.readUnsigned(base + i) != 34) {
         throw FormatException('Expected string at offset $i', _bytes, i);
       }
       final start = i + 1;
@@ -3326,13 +3359,13 @@ class _JsonTokenReader {
       i = end + 1;
 
       var j = i;
-      while (j < _len && _isWs(_b(j))) {
+      while (j < _len && _isWs(d.readUnsigned(base + j))) {
         j++;
       }
       if (_stackLength > 0) {
-        if (j < _len && _b(j) == 44) {
+        if (j < _len && d.readUnsigned(base + j) == 44) {
           j++;
-          while (j < _len && _isWs(_b(j))) {
+          while (j < _len && _isWs(d.readUnsigned(base + j))) {
             j++;
           }
           _topState = 3;
@@ -3347,16 +3380,15 @@ class _JsonTokenReader {
       }
 
       final len = end - start;
-      final d = _data;
-      final base = _offsetInElements;
-      if (_isVerbatimAscii(d, base + start, base + end)) {
-        if (len <= 8 && options._shortKeyInts != null) {
-          if (start + 8 <= _len) {
-            final keyInt = _readInt64LE(start) & JsonKeyOptions._lenMasks[len];
-            return options._findShortKeyIndex(keyInt, len);
-          }
-          return options._selectKey(_bytes, start, end);
+      if (len <= 8 && options._shortKeyInts != null) {
+        if (start + 8 <= _len) {
+          final keyInt = _readInt64LE(start) & JsonKeyOptions._lenMasks[len];
+          final idx = options._findShortKeyIndex(keyInt, len);
+          if (idx != -1) return idx;
         }
+      }
+
+      if (_isVerbatimAscii(d, base + start, base + end)) {
         return options._selectKey(_bytes, start, end);
       }
 
@@ -3384,16 +3416,17 @@ class _JsonTokenReader {
       final (start, end) = _scanNameSpanAndConsumeColon();
 
       final len = end - start;
+      if (len <= 8 && options._shortKeyInts != null) {
+        if (start + 8 <= _len) {
+          final keyInt = _readInt64LE(start) & JsonKeyOptions._lenMasks[len];
+          final idx = options._findShortKeyIndex(keyInt, len);
+          if (idx != -1) return idx;
+        }
+      }
+
       final d = _data;
       final base = _offsetInElements;
       if (_isVerbatimAscii(d, base + start, base + end)) {
-        if (len <= 8 && options._shortKeyInts != null) {
-          if (start + 8 <= _len) {
-            final keyInt = _readInt64LE(start) & JsonKeyOptions._lenMasks[len];
-            return options._findShortKeyIndex(keyInt, len);
-          }
-          return options._selectKey(_bytes, start, end);
-        }
         return options._selectKey(_bytes, start, end);
       }
 
@@ -3419,41 +3452,47 @@ class _JsonTokenReader {
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingValue();
+      final d = _data;
+      final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(_b(i))) {
+      while (i < _len && _isWs(d.readUnsigned(base + i))) {
         i++;
       }
       if (i >= _len) {
         throw FormatException('Unexpected end of document', _bytes, i);
       }
       final start = i;
-      if (_b(i) == 45) {
+      var b = d.readUnsigned(base + i);
+      if (b == 45) {
         i++;
         if (i >= _len) {
           throw FormatException('Expected digit after "-"', _bytes, i);
         }
+        b = d.readUnsigned(base + i);
       }
 
-      final firstDigit = _b(i);
-      if (firstDigit == 48) {
+      if (b == 48) {
         i++;
-        if (i < _len && _b(i) >= 48 && _b(i) <= 57) {
-          throw FormatException(
-            'Leading zero cannot be followed by another digit',
-            _bytes,
-            i,
-          );
+        if (i < _len) {
+          b = d.readUnsigned(base + i);
+          if (b >= 48 && b <= 57) {
+            throw FormatException(
+              'Leading zero cannot be followed by another digit',
+              _bytes,
+              i,
+            );
+          }
         }
-      } else if (firstDigit >= 49 && firstDigit <= 57) {
-        while (i < _len && _b(i) >= 48 && _b(i) <= 57) {
+      } else if (b >= 49 && b <= 57) {
+        while (i < _len && b >= 48 && b <= 57) {
           i++;
+          if (i < _len) b = d.readUnsigned(base + i);
         }
       } else {
         throw FormatException('Expected digit in number', _bytes, i);
       }
 
       if (i < _len) {
-        final b = _b(i);
         if (b == 46 || b == 101 || b == 69) {
           throw FormatException(
             'Invalid integer (found fractional or exponent component)',
@@ -3474,13 +3513,13 @@ class _JsonTokenReader {
       final val = _parseIntFromBytes(_bytes, start, end);
 
       var j = i;
-      while (j < _len && _isWs(_b(j))) {
+      while (j < _len && _isWs(d.readUnsigned(base + j))) {
         j++;
       }
       if (_stackLength > 0) {
-        if (j < _len && _b(j) == 44) {
+        if (j < _len && d.readUnsigned(base + j) == 44) {
           j++;
-          while (j < _len && _isWs(_b(j))) {
+          while (j < _len && _isWs(d.readUnsigned(base + j))) {
             j++;
           }
           _topState = 3;
@@ -3515,8 +3554,10 @@ class _JsonTokenReader {
     final prevHasReadRoot = _hasReadRoot;
     try {
       _beforeReadingValue();
+      final d = _data;
+      final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(_b(i))) {
+      while (i < _len && _isWs(d.readUnsigned(base + i))) {
         i++;
       }
       if (i >= _len) {
@@ -3524,12 +3565,14 @@ class _JsonTokenReader {
       }
       final start = i;
       var isNegative = false;
-      if (_b(i) == 45) {
+      var b = d.readUnsigned(base + i);
+      if (b == 45) {
         isNegative = true;
         i++;
         if (i >= _len) {
           throw FormatException('Expected digit after "-"', _bytes, i);
         }
+        b = d.readUnsigned(base + i);
       }
 
       int mantissa = 0;
@@ -3537,73 +3580,93 @@ class _JsonTokenReader {
       int decimalExp = 0;
       bool truncatedDigits = false;
 
-      final firstDigit = _b(i);
-      if (firstDigit == 48) {
+      if (b == 48) {
         i++;
-        if (i < _len && _b(i) >= 48 && _b(i) <= 57) {
-          throw FormatException(
-            'Leading zero cannot be followed by another digit',
-            _bytes,
-            i,
-          );
+        if (i < _len) {
+          b = d.readUnsigned(base + i);
+          if (b >= 48 && b <= 57) {
+            throw FormatException(
+              'Leading zero cannot be followed by another digit',
+              _bytes,
+              i,
+            );
+          }
         }
-      } else if (firstDigit >= 49 && firstDigit <= 57) {
-        while (i < _len && _b(i) >= 48 && _b(i) <= 57) {
+      } else if (b >= 49 && b <= 57) {
+        while (i < _len && b >= 48 && b <= 57) {
           if (digitCount < 19) {
-            mantissa = mantissa * 10 + (_b(i) - 48);
+            mantissa = mantissa * 10 + (b - 48);
             digitCount++;
           } else {
             truncatedDigits = true;
             decimalExp++;
           }
           i++;
+          if (i < _len) b = d.readUnsigned(base + i);
         }
       } else {
         throw FormatException('Expected digit in number', _bytes, i);
       }
 
-      if (i < _len && _b(i) == 46) {
+      if (i < _len && b == 46) {
         i++;
-        if (i >= _len || _b(i) < 48 || _b(i) > 57) {
+        if (i >= _len) {
           throw FormatException(
             'Expected digit after decimal point',
             _bytes,
             i,
           );
         }
-        while (i < _len && _b(i) >= 48 && _b(i) <= 57) {
-          if (mantissa == 0 && _b(i) == 48) {
+        b = d.readUnsigned(base + i);
+        if (b < 48 || b > 57) {
+          throw FormatException(
+            'Expected digit after decimal point',
+            _bytes,
+            i,
+          );
+        }
+        while (i < _len && b >= 48 && b <= 57) {
+          if (mantissa == 0 && b == 48) {
             decimalExp--;
           } else if (digitCount < 19) {
-            mantissa = mantissa * 10 + (_b(i) - 48);
+            mantissa = mantissa * 10 + (b - 48);
             digitCount++;
             decimalExp--;
           } else {
             truncatedDigits = true;
           }
           i++;
+          if (i < _len) b = d.readUnsigned(base + i);
         }
       }
 
-      if (i < _len && (_b(i) == 101 || _b(i) == 69)) {
+      if (i < _len && (b == 101 || b == 69)) {
         i++;
         var expNeg = false;
-        if (i < _len && (_b(i) == 43 || _b(i) == 45)) {
-          if (_b(i) == 45) expNeg = true;
-          i++;
+        if (i < _len) {
+          b = d.readUnsigned(base + i);
+          if (b == 43 || b == 45) {
+            if (b == 45) expNeg = true;
+            i++;
+          }
         }
-        if (i >= _len || _b(i) < 48 || _b(i) > 57) {
+        if (i >= _len) {
+          throw FormatException('Expected digit in exponent', _bytes, i);
+        }
+        b = d.readUnsigned(base + i);
+        if (b < 48 || b > 57) {
           throw FormatException('Expected digit in exponent', _bytes, i);
         }
         var explicitExp = 0;
         var expSaturated = false;
-        while (i < _len && _b(i) >= 48 && _b(i) <= 57) {
+        while (i < _len && b >= 48 && b <= 57) {
           if (explicitExp < 10000) {
-            explicitExp = explicitExp * 10 + (_b(i) - 48);
+            explicitExp = explicitExp * 10 + (b - 48);
           } else {
             expSaturated = true;
           }
           i++;
+          if (i < _len) b = d.readUnsigned(base + i);
         }
         decimalExp += expNeg ? -explicitExp : explicitExp;
         if (expSaturated) {
@@ -3612,7 +3675,6 @@ class _JsonTokenReader {
       }
 
       if (i < _len) {
-        final b = _b(i);
         if (b != 44 && b != 125 && b != 93 && !_isWs(b)) {
           throw FormatException(
             'Unexpected character after number: ${String.fromCharCode(b)}',
@@ -3625,13 +3687,13 @@ class _JsonTokenReader {
       final end = i;
 
       var j = i;
-      while (j < _len && _isWs(_b(j))) {
+      while (j < _len && _isWs(d.readUnsigned(base + j))) {
         j++;
       }
       if (_stackLength > 0) {
-        if (j < _len && _b(j) == 44) {
+        if (j < _len && d.readUnsigned(base + j) == 44) {
           j++;
-          while (j < _len && _isWs(_b(j))) {
+          while (j < _len && _isWs(d.readUnsigned(base + j))) {
             j++;
           }
           _topState = 3;
