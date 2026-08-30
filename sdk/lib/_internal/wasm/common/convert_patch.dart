@@ -2968,10 +2968,10 @@ class _JsonTokenReader {
       final b1 = d.readUnsigned(base + i + 1);
       final b2 = d.readUnsigned(base + i + 2);
       final b3 = d.readUnsigned(base + i + 3);
-      if (((b0 <= 34 || b0 == 92) |
-              (b1 <= 34 || b1 == 92) |
-              (b2 <= 34 || b2 == 92) |
-              (b3 <= 34 || b3 == 92)) !=
+      if (((b0 < 32 || b0 == 34 || b0 == 92) |
+              (b1 < 32 || b1 == 34 || b1 == 92) |
+              (b2 < 32 || b2 == 34 || b2 == 92) |
+              (b3 < 32 || b3 == 34 || b3 == 92)) !=
           0) {
         break;
       }
