@@ -3380,20 +3380,12 @@ class _JsonTokenReader {
       }
 
       final len = end - start;
-      if (len <= 8 && options._shortKeyInts != null) {
-        if (start + 8 <= _len) {
-          final keyInt = _readInt64LE(start) & JsonKeyOptions._lenMasks[len];
-          final idx = options._findShortKeyIndex(keyInt, len);
-          if (idx != -1) return idx;
-        }
-      }
-
       if (_isVerbatimAscii(d, base + start, base + end)) {
-        return options._selectKey(_bytes, start, end);
+        return options.selectKey(_bytes, start, end);
       }
 
       final unescaped = _decodeCachedString(start, end);
-      return options.keys.indexOf(unescaped);
+      return options.indexOf(unescaped);
     } catch (_) {
       _offset = prevOffset;
       _stackLength = prevStackLen;
@@ -3415,23 +3407,14 @@ class _JsonTokenReader {
     try {
       final (start, end) = _scanNameSpanAndConsumeColon();
 
-      final len = end - start;
-      if (len <= 8 && options._shortKeyInts != null) {
-        if (start + 8 <= _len) {
-          final keyInt = _readInt64LE(start) & JsonKeyOptions._lenMasks[len];
-          final idx = options._findShortKeyIndex(keyInt, len);
-          if (idx != -1) return idx;
-        }
-      }
-
       final d = _data;
       final base = _offsetInElements;
       if (_isVerbatimAscii(d, base + start, base + end)) {
-        return options._selectKey(_bytes, start, end);
+        return options.selectKey(_bytes, start, end);
       }
 
       final unescaped = _decodeCachedString(start, end);
-      return options.keys.indexOf(unescaped);
+      return options.indexOf(unescaped);
     } catch (_) {
       _offset = prevOffset;
       _stackLength = prevStackLen;
