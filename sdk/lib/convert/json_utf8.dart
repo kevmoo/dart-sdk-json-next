@@ -45,187 +45,242 @@ enum JsonTokenType {
 /// Pre-compiled set of ASCII key names or enum strings for O(1) matching in pull parsers.
 final class JsonKeyOptions {
   final List<String> keys;
-  final Uint8List _encodedKeys;
-  final Int32List _offsets;
-  final Int32List _lengths;
-  final Int32List _hashTable;
-  final int _hashMask;
-  final Int64List? _shortKeyInts;
-  final Uint8List? _shortKeyLens;
 
-  // Masks selecting the low `n` bytes of a packed 8-byte key.
-  //
-  // Only meaningful where `int` is a 64-bit integer. On the web `int` is a
-  // double and bitwise operators are evaluated with 32-bit semantics, so
-  // entries 7 and 8 do not hold the intended values -- entry 7 cannot even be
-  // written as a web-representable literal, which is why it is built with a
-  // shift. Nothing reads this table on the web: [_shortKeyInts] is left null
-  // there and every use is guarded on it.
-  static const _lenMasks = <int>[
-    0x0,
-    0x00000000000000FF,
-    0x000000000000FFFF,
-    0x0000000000FFFFFF,
-    0x00000000FFFFFFFF,
-    0x000000FFFFFFFFFF,
-    0x0000FFFFFFFFFFFF,
-    (0x0000FFFFFFFFFFFF << 8) | 0xFF,
-    -1, // 0xFFFFFFFFFFFFFFFF (all 64 bits set)
-  ];
+  final Map<String, int> _indexMap;
+  final int _minLen;
+  final int _maxLen;
+
+  // Single-key fast path
+  final Uint8List? _singleKey;
+  final int _singleKeyIndex;
+  final int _singleFirstByte;
+  final int _singleLastByte;
+
+  // Unified O(1) hash table backed by parallel typed arrays.
+  // All tables are indexed directly by `slot` to eliminate double indirection.
+  final Uint8List _encodedKeys;
+  final Int32List _tableOffsets;
+  final Int32List _tableLengths;
+  final Uint8List _tableFirstBytes;
+  final Uint8List _tableLastBytes;
+  final Int32List _tableKeyIndices;
+  final int _hashMask;
+
+  static final Uint8List _emptyUint8 = Uint8List(0);
+  static final Int32List _emptyInt32 = Int32List(0);
 
   JsonKeyOptions._(
     this.keys,
+    this._indexMap,
+    this._minLen,
+    this._maxLen,
+    this._singleKey,
+    this._singleKeyIndex,
+    this._singleFirstByte,
+    this._singleLastByte,
     this._encodedKeys,
-    this._offsets,
-    this._lengths,
-    this._hashTable,
+    this._tableOffsets,
+    this._tableLengths,
+    this._tableFirstBytes,
+    this._tableLastBytes,
+    this._tableKeyIndices,
     this._hashMask,
-    this._shortKeyInts,
-    this._shortKeyLens,
   );
 
-  /// Pre-computes UTF-8 byte representations and length tables for [keys].
+  /// Creates a [JsonKeyOptions] lookup table from the given [keys].
+  ///
+  /// Throws [ArgumentError] if [keys] is empty.
   factory JsonKeyOptions.of(List<String> keys) {
     if (keys.isEmpty) {
       throw ArgumentError.value(keys, 'keys', 'Must not be empty');
     }
-    final builder = BytesBuilder(copy: false);
-    final offsets = Int32List(keys.length);
-    final lengths = Int32List(keys.length);
-    final Int64List? shortKeyInts;
-    final Uint8List? shortKeyLens;
 
-    // Fast 64-bit SWAR linear scan is only beneficial for small key sets (<= 16).
-    // Larger key sets or web platforms use the O(1) FNV hash table to avoid
-    // O(K) linear scanning regressions.
-    if (!identical(1, 1.0) && keys.length <= 16) {
-      shortKeyInts = Int64List(keys.length);
-      shortKeyLens = Uint8List(keys.length);
-    } else {
-      shortKeyInts = null;
-      shortKeyLens = null;
-    }
+    final utf8Keys = List<Uint8List>.generate(
+      keys.length,
+      (i) => Uint8List.fromList(utf8.encode(keys[i])),
+      growable: false,
+    );
 
+    final indexMap = <String, int>{};
     for (var i = 0; i < keys.length; i++) {
-      offsets[i] = builder.length;
-      final encoded = utf8.encode(keys[i]);
-      final len = encoded.length;
-      lengths[i] = len;
-      builder.add(encoded);
-
-      if (shortKeyInts != null && shortKeyLens != null && len <= 8) {
-        // Biased by 1 so that 0 is reserved for "not a short key". Without the
-        // bias, keys longer than 8 bytes keep the zero-filled default (0, 0),
-        // which is exactly what a lookup of the empty key computes.
-        shortKeyLens[i] = len + 1;
-        var packed = 0;
-        for (var j = 0; j < len; j++) {
-          packed |= encoded[j] << (j * 8);
-        }
-        shortKeyInts[i] = packed;
-      }
+      indexMap.putIfAbsent(keys[i], () => i);
     }
-    final encodedKeys = builder.takeBytes();
 
-    var tableSize = 8;
-    while (tableSize < keys.length * 2) {
-      tableSize <<= 1;
+    var minLen = utf8Keys[0].length;
+    var maxLen = utf8Keys[0].length;
+    for (var i = 1; i < utf8Keys.length; i++) {
+      final len = utf8Keys[i].length;
+      if (len < minLen) minLen = len;
+      if (len > maxLen) maxLen = len;
     }
-    final mask = tableSize - 1;
-    final table = Int32List(tableSize)..fillRange(0, tableSize, -1);
 
-    for (var i = 0; i < keys.length; i++) {
+    final uniqueIndices = indexMap.values.toList(growable: false);
+
+    if (uniqueIndices.length == 1) {
+      final firstIdx = uniqueIndices[0];
+      final keyBytes = utf8Keys[firstIdx];
+      return JsonKeyOptions._(
+        List.unmodifiable(keys),
+        indexMap,
+        minLen,
+        maxLen,
+        keyBytes,
+        firstIdx,
+        keyBytes.isEmpty ? 0 : keyBytes[0],
+        keyBytes.isEmpty ? 0 : keyBytes[keyBytes.length - 1],
+        _emptyUint8,
+        _emptyInt32,
+        _emptyInt32,
+        _emptyUint8,
+        _emptyUint8,
+        _emptyInt32,
+        0,
+      );
+    }
+
+    final count = uniqueIndices.length;
+    var totalBytes = 0;
+    for (var i = 0; i < count; i++) {
+      totalBytes += utf8Keys[uniqueIndices[i]].length;
+    }
+
+    final encodedKeys = Uint8List(totalBytes);
+    final offsets = Int32List(count);
+    var currentOffset = 0;
+    for (var i = 0; i < count; i++) {
+      final bytes = utf8Keys[uniqueIndices[i]];
+      offsets[i] = currentOffset;
+      encodedKeys.setRange(currentOffset, currentOffset + bytes.length, bytes);
+      currentOffset += bytes.length;
+    }
+
+    // Table capacity: power of two with load factor <= 0.25 to ensure ~1 probe.
+    var cap = 16;
+    while (cap < count * 4) {
+      cap <<= 1;
+    }
+    final mask = cap - 1;
+    final tableKeyIndices = Int32List(cap)..fillRange(0, cap, -1);
+    final tableLengths = Int32List(cap);
+    final tableOffsets = Int32List(cap);
+    final tableFirstBytes = Uint8List(cap);
+    final tableLastBytes = Uint8List(cap);
+
+    for (var i = 0; i < count; i++) {
+      final origIdx = uniqueIndices[i];
+      final bytes = utf8Keys[origIdx];
+      final len = bytes.length;
       final off = offsets[i];
-      final len = lengths[i];
-      var h = 0x811c9dc5;
-      for (var j = 0; j < len; j++) {
-        h = _imul32(h ^ encodedKeys[off + j], 0x01000193);
-      }
+      final h = _fastHash(encodedKeys, off, off + len, len);
       var slot = h & mask;
-      while (table[slot] != -1) {
-        final existing = table[slot];
-        if (lengths[existing] == len) {
-          final existingOff = offsets[existing];
-          var match = true;
-          for (var j = 0; j < len; j++) {
-            if (encodedKeys[existingOff + j] != encodedKeys[off + j]) {
-              match = false;
-              break;
-            }
-          }
-          if (match) break; // duplicate, keep first
-        }
+      while (tableKeyIndices[slot] != -1) {
         slot = (slot + 1) & mask;
       }
-      if (table[slot] == -1) {
-        table[slot] = i;
-      }
+      tableKeyIndices[slot] = origIdx;
+      tableLengths[slot] = len;
+      tableOffsets[slot] = off;
+      tableFirstBytes[slot] = len > 0 ? bytes[0] : 0;
+      tableLastBytes[slot] = len > 0 ? bytes[len - 1] : 0;
     }
 
     return JsonKeyOptions._(
       List.unmodifiable(keys),
-      encodedKeys.asUnmodifiableView(),
-      offsets.asUnmodifiableView(),
-      lengths.asUnmodifiableView(),
-      table,
+      indexMap,
+      minLen,
+      maxLen,
+      null,
+      0,
+      0,
+      0,
+      encodedKeys,
+      tableOffsets,
+      tableLengths,
+      tableFirstBytes,
+      tableLastBytes,
+      tableKeyIndices,
       mask,
-      shortKeyInts?.asUnmodifiableView(),
-      shortKeyLens?.asUnmodifiableView(),
     );
   }
 
+  /// The index of [key], or `-1` if not recognized.
+  int indexOf(String key) => _indexMap[key] ?? -1;
+
   int get length => keys.length;
 
-  /// Fast-path 64-bit SWAR short key matching (len <= 8), linear in the
-  /// number of keys.
-  ///
-  /// Takes the key's UTF-8 bytes packed little-endian into an integer, which
-  /// is an internal representation with no portable way for a caller to build
-  /// it, and returns -1 unconditionally on the web. Private for both reasons.
+  /// Matches the byte span `[start..end]` against pre-compiled keys in O(1).
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
-  int _findShortKeyIndex(int keyInt, int len) {
-    final ints = _shortKeyInts;
-    final lens = _shortKeyLens;
-    if (ints == null || lens == null) return -1;
-    final count = keys.length;
-    final biasedLen = len + 1;
-    for (var i = 0; i < count; i++) {
-      if (lens[i] == biasedLen && ints[i] == keyInt) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  /// Matches the byte span `[start..end]` against pre-compiled keys in O(1).
-  int _selectKey(Uint8List source, int start, int end) {
+  int selectKey(Uint8List source, int start, int end) {
     if (start < 0 || end > source.length || start > end) {
       return -1;
     }
     final spanLen = end - start;
-    var h = 0x811c9dc5;
-    for (var i = start; i < end; i++) {
-      h = _imul32(h ^ source[i], 0x01000193);
+    if (spanLen < _minLen || spanLen > _maxLen) {
+      return -1;
     }
+
+    final singleKey = _singleKey;
+    if (singleKey != null) {
+      if (spanLen != singleKey.length) return -1;
+      if (spanLen == 0) return _singleKeyIndex;
+      if (source[start] != _singleFirstByte) return -1;
+      if (spanLen > 1 && source[end - 1] != _singleLastByte) return -1;
+      for (var j = 1; j < spanLen - 1; j++) {
+        if (source[start + j] != singleKey[j]) return -1;
+      }
+      return _singleKeyIndex;
+    }
+
+    final h = _fastHash(source, start, end, spanLen);
     final mask = _hashMask;
     var slot = h & mask;
+    final firstByte = spanLen > 0 ? source[start] : 0;
+    final lastByte = spanLen > 0 ? source[end - 1] : 0;
+
+    final keyIndices = _tableKeyIndices;
+    final lengths = _tableLengths;
+    final firstBytes = _tableFirstBytes;
+    final lastBytes = _tableLastBytes;
+    final offsets = _tableOffsets;
+    final encodedKeys = _encodedKeys;
+
     while (true) {
-      final idx = _hashTable[slot];
-      if (idx == -1) return -1;
-      if (_lengths[idx] == spanLen) {
-        final off = _offsets[idx];
+      final keyIdx = keyIndices[slot];
+      if (keyIdx == -1) return -1;
+      if (lengths[slot] == spanLen &&
+          firstBytes[slot] == firstByte &&
+          lastBytes[slot] == lastByte) {
+        final off = offsets[slot];
         var match = true;
-        for (var j = 0; j < spanLen; j++) {
-          if (source[start + j] != _encodedKeys[off + j]) {
+        for (var j = 1; j < spanLen - 1; j++) {
+          if (source[start + j] != encodedKeys[off + j]) {
             match = false;
             break;
           }
         }
-        if (match) return idx;
+        if (match) return keyIdx;
       }
       slot = (slot + 1) & mask;
     }
+  }
+
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
+  static int _fastHash(Uint8List source, int start, int end, int len) {
+    if (len <= 4) {
+      var h = len;
+      for (var i = start; i < end; i++) {
+        h = (h * 31) ^ source[i];
+      }
+      return h ^ (h >> 16) ^ (h >> 8);
+    }
+    final h =
+        len ^
+        (source[start] << 24) ^
+        (source[start + 1] << 16) ^
+        (source[start + (len >> 1)] << 8) ^
+        source[end - 1];
+    return h ^ (h >> 16) ^ (h >> 8);
   }
 }
 
@@ -2171,22 +2226,12 @@ final class _JsonTokenReader implements JsonTokenReader {
   int selectName(JsonKeyOptions options) => _restoringOnError(() {
     final (start, end) = _scanNameSpanAndConsumeColon();
 
-    final len = end - start;
     if (_isVerbatimUtf8(_bytes, start, end)) {
-      if (len <= 8 && options._shortKeyInts != null) {
-        if (start + 8 <= _bytes.length) {
-          final keyInt =
-              _byteData.getInt64(start, Endian.little) &
-              JsonKeyOptions._lenMasks[len];
-          return options._findShortKeyIndex(keyInt, len);
-        }
-        return options._selectKey(_bytes, start, end);
-      }
-      return options._selectKey(_bytes, start, end);
+      return options.selectKey(_bytes, start, end);
     }
 
     final unescaped = _decodeCachedString(start, end);
-    return options.keys.indexOf(unescaped);
+    return options.indexOf(unescaped);
   });
 
   @override
@@ -2224,22 +2269,12 @@ final class _JsonTokenReader implements JsonTokenReader {
       _offset = j;
     }
 
-    final len = end - start;
     if (_isVerbatimUtf8(_bytes, start, end)) {
-      if (len <= 8 && options._shortKeyInts != null) {
-        if (start + 8 <= _bytes.length) {
-          final keyInt =
-              _byteData.getInt64(start, Endian.little) &
-              JsonKeyOptions._lenMasks[len];
-          return options._findShortKeyIndex(keyInt, len);
-        }
-        return options._selectKey(_bytes, start, end);
-      }
-      return options._selectKey(_bytes, start, end);
+      return options.selectKey(_bytes, start, end);
     }
 
     final unescaped = _decodeCachedString(start, end);
-    return options.keys.indexOf(unescaped);
+    return options.indexOf(unescaped);
   });
 
   @override
@@ -3190,21 +3225,6 @@ int _digitCountNegative(int v) {
 }
 
 const String _hexDigits = "0123456789abcdef";
-
-/// Web-safe 32-bit integer multiplication performing exact modulo 2^32
-/// multiplication with 31-bit non-negative masking (`& 0x7fffffff`), safe
-/// against JavaScript 53-bit float mantissa precision limits.
-@pragma('vm:prefer-inline')
-@pragma('wasm:prefer-inline')
-int _imul32(int a, int b) {
-  final aLo = a & 0xffff;
-  final aHi = (a >> 16) & 0xffff;
-  final bLo = b & 0xffff;
-  final bHi = (b >> 16) & 0xffff;
-  final lo = aLo * bLo;
-  final hi = aLo * bHi + aHi * bLo;
-  return ((lo + ((hi & 0xffff) << 16)) & 0x7fffffff);
-}
 
 @pragma('vm:prefer-inline')
 @pragma('wasm:prefer-inline')
