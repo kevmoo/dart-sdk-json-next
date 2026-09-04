@@ -3379,7 +3379,6 @@ class _JsonTokenReader {
         _offset = j;
       }
 
-      final len = end - start;
       if (_isVerbatimAscii(d, base + start, base + end)) {
         return options.selectKey(_bytes, start, end);
       }
@@ -3398,7 +3397,6 @@ class _JsonTokenReader {
 
   @patch
   int selectName(JsonKeyOptions options) {
-    final _len = _bytes.length;
     final prevOffset = _offset;
     final prevStackLen = _stackLength;
     final prevTopType = _topType;

@@ -24,6 +24,11 @@ void main() {
   testEmptyKeyNotInOptions();
   testReadStringCorrectness();
   testLargeKeyOptionsAndMisses();
+  testEmptyKeysThrows();
+  testSingleKeyFastPath();
+  testIdenticalLengthAndFirstLastByte();
+  testStress200Keys();
+  testBoundaryChecks();
 }
 
 Uint8List _b(String s) => Uint8List.fromList(utf8.encode(s));
@@ -463,4 +468,61 @@ void testLargeKeyOptionsAndMisses() {
       reader.endObject();
     }
   }
+}
+
+void testEmptyKeysThrows() {
+  Expect.throwsArgumentError(() => JsonKeyOptions.of([]));
+}
+
+void testSingleKeyFastPath() {
+  final options = JsonKeyOptions.of(['id']);
+  Expect.equals(1, options.length);
+  Expect.listEquals(['id'], options.keys);
+  Expect.equals(0, options.indexOf('id'));
+  Expect.equals(-1, options.indexOf('other'));
+
+  final buffer = Uint8List.fromList(utf8.encode('{"id": 123}'));
+  // span for "id" at index 2..4
+  Expect.equals(0, options.selectKey(buffer, 2, 4));
+  // span for mismatch length
+  Expect.equals(-1, options.selectKey(buffer, 1, 4));
+  // span for mismatch content
+  Expect.equals(-1, options.selectKey(buffer, 7, 9));
+}
+
+void testIdenticalLengthAndFirstLastByte() {
+  // Both length 6, both start with 'c', both end with 'e'
+  final options = JsonKeyOptions.of(['create', 'cookie']);
+  Expect.equals(2, options.length);
+
+  final source = Uint8List.fromList(utf8.encode('create cookie candle'));
+  Expect.equals(0, options.selectKey(source, 0, 6)); // create
+  Expect.equals(1, options.selectKey(source, 7, 13)); // cookie
+  Expect.equals(-1, options.selectKey(source, 14, 20)); // candle
+}
+
+void testStress200Keys() {
+  final keys = List.generate(200, (i) => 'key_item_$i');
+  final options = JsonKeyOptions.of(keys);
+  Expect.equals(200, options.length);
+
+  for (var i = 0; i < keys.length; i++) {
+    final b = Uint8List.fromList(utf8.encode(keys[i]));
+    Expect.equals(i, options.selectKey(b, 0, b.length));
+    Expect.equals(i, options.indexOf(keys[i]));
+  }
+
+  final unknown = Uint8List.fromList(utf8.encode('unknown_key'));
+  Expect.equals(-1, options.selectKey(unknown, 0, unknown.length));
+  Expect.equals(-1, options.indexOf('unknown_key'));
+}
+
+void testBoundaryChecks() {
+  final options = JsonKeyOptions.of(['alpha', 'beta']);
+  final buffer = Uint8List.fromList(utf8.encode('alpha'));
+
+  Expect.equals(-1, options.selectKey(buffer, -1, 5));
+  Expect.equals(-1, options.selectKey(buffer, 0, 6));
+  Expect.equals(-1, options.selectKey(buffer, 3, 2));
+  Expect.equals(0, options.selectKey(buffer, 0, 5));
 }

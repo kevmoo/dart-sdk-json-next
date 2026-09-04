@@ -3226,21 +3226,6 @@ int _digitCountNegative(int v) {
 
 const String _hexDigits = "0123456789abcdef";
 
-/// Web-safe 32-bit integer multiplication performing exact modulo 2^32
-/// multiplication with 31-bit non-negative masking (`& 0x7fffffff`), safe
-/// against JavaScript 53-bit float mantissa precision limits.
-@pragma('vm:prefer-inline')
-@pragma('wasm:prefer-inline')
-int _imul32(int a, int b) {
-  final aLo = a & 0xffff;
-  final aHi = (a >> 16) & 0xffff;
-  final bLo = b & 0xffff;
-  final bHi = (b >> 16) & 0xffff;
-  final lo = aLo * bLo;
-  final hi = aLo * bHi + aHi * bLo;
-  return ((lo + ((hi & 0xffff) << 16)) & 0x7fffffff);
-}
-
 @pragma('vm:prefer-inline')
 @pragma('wasm:prefer-inline')
 bool _isHexDigit(int b) => hexDigitValue(b) >= 0;
@@ -6431,8 +6416,7 @@ String _decodeStringUtf8(
     throw RangeError('Invalid byte span [$start, $end)');
   }
   if (start == end) return '';
-
-  var isAscii = true;
+  var maxByte = 0;
   var hasBackslash = false;
   for (var i = start; i < end; i++) {
     final b = source[i];
@@ -6443,9 +6427,7 @@ String _decodeStringUtf8(
         i,
       );
     }
-    if (b >= 128) {
-      isAscii = false;
-    }
+    maxByte |= b;
     if (b == 92) {
       hasBackslash = true;
       break;
@@ -6453,7 +6435,7 @@ String _decodeStringUtf8(
   }
 
   if (!hasBackslash) {
-    if (isAscii) {
+    if (maxByte <= 0x7F) {
       return String.fromCharCodes(source, start, end);
     }
     return _getUtf8Decoder(allowMalformed).convert(source, start, end);
@@ -6461,18 +6443,32 @@ String _decodeStringUtf8(
 
   final buffer = StringBuffer();
   var i = start;
+  var runStart = start;
   while (i < end) {
-    final byte = source[i];
-    if (byte < 0x20) {
+    final b = source[i];
+    if (b < 0x20) {
       throw FormatException(
         'Unescaped control character in string literal at offset $i',
         source,
         i,
       );
     }
-    if (byte == 92) {
+    if (b == 92) {
       // '\\'
-      i++;
+      if (i > runStart) {
+        var runMax = 0;
+        for (var k = runStart; k < i; k++) {
+          runMax |= source[k];
+        }
+        if (runMax <= 0x7F) {
+          buffer.write(String.fromCharCodes(source, runStart, i));
+        } else {
+          buffer.write(
+            _getUtf8Decoder(allowMalformed).convert(source, runStart, i),
+          );
+        }
+      }
+      i++; // skip '\\'
       if (i >= end) {
         throw FormatException('Unexpected EOF in escape sequence', source, i);
       }
@@ -6520,36 +6516,25 @@ String _decodeStringUtf8(
             i - 1,
           );
       }
-    } else if (byte <= 0x7F) {
-      buffer.writeCharCode(byte);
-      i++;
+      runStart = i;
     } else {
-      final charLen = _utf8SequenceLength(byte);
-      if (i + charLen > end) {
-        if (allowMalformed) {
-          buffer.writeCharCode(0xFFFD);
-          i++;
-          continue;
-        }
-        throw FormatException('Truncated UTF-8 multibyte sequence', source, i);
-      }
+      i++;
+    }
+  }
+  if (i > runStart) {
+    var runMax = 0;
+    for (var k = runStart; k < i; k++) {
+      runMax |= source[k];
+    }
+    if (runMax <= 0x7F) {
+      buffer.write(String.fromCharCodes(source, runStart, i));
+    } else {
       buffer.write(
-        _getUtf8Decoder(allowMalformed).convert(source, i, i + charLen),
+        _getUtf8Decoder(allowMalformed).convert(source, runStart, i),
       );
-      i += charLen;
     }
   }
   return buffer.toString();
-}
-
-@pragma('vm:prefer-inline')
-@pragma('wasm:prefer-inline')
-int _utf8SequenceLength(int firstByte) {
-  if (firstByte <= 0x7F) return 1;
-  if ((firstByte & 0xE0) == 0xC0) return 2;
-  if ((firstByte & 0xF0) == 0xE0) return 3;
-  if ((firstByte & 0xF8) == 0xF0) return 4;
-  return 1;
 }
 
 @pragma('vm:prefer-inline')
