@@ -335,7 +335,6 @@ namespace dart {
   V(TransferableTypedData_factory, 1)                                          \
   V(TransferableTypedData_materialize, 1)                                      \
   V(Timer_postTimerEvent, 1)                                                   \
-  V(JsonUtf8Decoder_parseToTape, 2)                                            \
   V(JsonUtf8Decoder_parseDouble, 3)                                            \
   V(JsonUtf8Encoder_writeDoubleToBuffer, 3)                                    \
   V(JsonUtf8Encoder_writeStringToBuffer, 3)

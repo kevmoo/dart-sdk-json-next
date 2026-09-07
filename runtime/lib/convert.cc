@@ -124,68 +124,6 @@ DEFINE_NATIVE_ENTRY(JsonUtf8Decoder_parseDouble, 0, 3) {
   return Object::null();
 }
 
-DEFINE_NATIVE_ENTRY(JsonUtf8Decoder_parseToTape, 0, 2) {
-  GET_NON_NULL_NATIVE_ARGUMENT(TypedDataBase, bytes, arguments->NativeArgAt(0));
-  GET_NON_NULL_NATIVE_ARGUMENT(TypedDataBase, tape, arguments->NativeArgAt(1));
-
-  intptr_t bytes_len = bytes.LengthInBytes();
-  if (bytes_len > 0x7FFFFFFF) {
-    return Smi::New(-1);
-  }
-  intptr_t tape_len = tape.LengthInBytes() / 8;
-  const uint8_t* payload = reinterpret_cast<const uint8_t*>(bytes.DataAddr(0));
-  int64_t* tape_data = reinterpret_cast<int64_t*>(tape.DataAddr(0));
-
-  intptr_t tape_idx = 0;
-  bool in_string = false;
-  bool escaped = false;
-  bool is_in_primitive = false;
-
-  for (intptr_t i = 0; i < bytes_len; ++i) {
-    uint8_t c = payload[i];
-    if (in_string) {
-      if (escaped) {
-        escaped = false;
-      } else if (c == '\\') {
-        escaped = true;
-      } else if (c == '"') {
-        in_string = false;
-      } else if (c < 0x20) {
-        // Unescaped control characters are illegal in JSON strings per RFC 8259 §7
-        return Smi::New(-1);
-      }
-    } else {
-      if (c == '"') {
-        is_in_primitive = false;
-        in_string = true;
-        if (tape_idx < tape_len) tape_data[tape_idx++] = static_cast<int64_t>(c) | (static_cast<int64_t>(i) << 32);
-        else tape_idx++;
-      } else if (c == '{' || c == '}' || c == '[' || c == ']' || c == ':' || c == ',') {
-        is_in_primitive = false;
-        if (tape_idx < tape_len) tape_data[tape_idx++] = static_cast<int64_t>(c) | (static_cast<int64_t>(i) << 32);
-        else tape_idx++;
-      } else if ((c >= '0' && c <= '9') || c == '-' || c == 't' || c == 'f' || c == 'n') {
-        if (!is_in_primitive) {
-          is_in_primitive = true;
-          if (tape_idx < tape_len) tape_data[tape_idx++] = static_cast<int64_t>('p') | (static_cast<int64_t>(i) << 32);
-          else tape_idx++;
-        }
-      } else if (IsJsonWhitespace(c)) {
-        is_in_primitive = false;
-      } else if (is_in_primitive && (c == '.' || c == '+' || c == '-' || c == 'e' || c == 'E' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
-        // Allow continuation characters of primitives (numbers/literals)
-      } else {
-        // Any other character outside a string is illegal JSON syntax per RFC 8259
-        return Smi::New(-1);
-      }
-    }
-  }
-  if (in_string || escaped || tape_idx > tape_len) {
-    return Smi::New(-1);
-  }
-  return Smi::New(tape_idx);
-}
-
 DEFINE_NATIVE_ENTRY(JsonUtf8Encoder_writeDoubleToBuffer, 0, 3) {
   GET_NON_NULL_NATIVE_ARGUMENT(Double, value_obj, arguments->NativeArgAt(0));
   GET_NON_NULL_NATIVE_ARGUMENT(TypedDataBase, buffer, arguments->NativeArgAt(1));

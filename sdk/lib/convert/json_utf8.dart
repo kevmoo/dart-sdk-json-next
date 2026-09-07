@@ -1687,6 +1687,8 @@ final class _JsonTokenReader implements JsonTokenReader {
     }
   }
 
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void _beforeReadingName() {
     _skipWs();
     if (_stackLength == 0 || _topType != 0) {
@@ -1712,6 +1714,8 @@ final class _JsonTokenReader implements JsonTokenReader {
     }
   }
 
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void _beforeReadingValue() {
     _skipWs();
     if (_stackLength > 0) {
@@ -1745,6 +1749,8 @@ final class _JsonTokenReader implements JsonTokenReader {
     }
   }
 
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void _afterReadingValue() {
     if (_stackLength > 0) {
       _topState = 2;
@@ -1753,6 +1759,8 @@ final class _JsonTokenReader implements JsonTokenReader {
     }
   }
 
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   static JsonTokenType _valueTokenType(int b) {
     switch (b) {
       case 123: // '{'
@@ -1784,6 +1792,8 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 
   @override
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   JsonTokenType peek() {
     final _len = _bytes.length;
     var i = _offset;
@@ -1907,6 +1917,8 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 
   @override
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void beginObject() {
     _beforeReadingValue();
     if (_offset < _bytes.length && _bytes[_offset] == 123) {
@@ -1933,6 +1945,8 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 
   @override
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void endObject() {
     _skipWs();
     if (_stackLength == 0 || _topType != 0) {
@@ -1964,6 +1978,8 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 
   @override
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void beginArray() {
     _beforeReadingValue();
     if (_offset < _bytes.length && _bytes[_offset] == 91) {
@@ -1990,6 +2006,8 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 
   @override
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void endArray() {
     _skipWs();
     if (_stackLength == 0 || _topType != 1) {
@@ -2015,62 +2033,37 @@ final class _JsonTokenReader implements JsonTokenReader {
     }
   }
 
+  @pragma('vm:never-inline')
+  void _restoreState(
+    int offset,
+    int stackLength,
+    int topType,
+    int topState,
+    bool hasReadRoot,
+  ) {
+    _offset = offset;
+    _stackLength = stackLength;
+    _topType = topType;
+    _topState = topState;
+    _hasReadRoot = hasReadRoot;
+  }
+
+  @override
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
-  T _restoringOnError<T>(T Function() action) {
+  bool hasNext() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
     final initialTopType = _topType;
     final initialTopState = _topState;
     final hadReadRoot = _hasReadRoot;
     try {
-      return action();
-    } catch (_) {
-      _offset = initialOffset;
-      _stackLength = initialStackLen;
-      _topType = initialTopType;
-      _topState = initialTopState;
-      _hasReadRoot = hadReadRoot;
-      rethrow;
-    }
-  }
+      _skipWs();
+      if (_stackLength > 0) {
+        final closeChar = _topType == 0 ? 125 : 93;
+        final closeStr = _topType == 0 ? '"}"' : '"]"';
 
-  @override
-  bool hasNext() => _restoringOnError(() {
-    _skipWs();
-    if (_stackLength > 0) {
-      final closeChar = _topType == 0 ? 125 : 93;
-      final closeStr = _topType == 0 ? '"}"' : '"]"';
-
-      if (_topState == 3) {
-        if (_offset >= _bytes.length) {
-          throw FormatException(
-            'Unexpected end of document after comma',
-            _bytes,
-            _offset,
-          );
-        }
-        if (_bytes[_offset] == 125 || _bytes[_offset] == 93) {
-          throw FormatException(
-            'Trailing comma before $closeStr at offset $_offset',
-          );
-        }
-        return true;
-      } else if (_topState == 0) {
-        if (_offset >= _bytes.length) return false;
-        if (_bytes[_offset] == closeChar) {
-          return false;
-        }
-        return true;
-      } else if (_topState == 2) {
-        if (_offset >= _bytes.length) return false;
-        if (_bytes[_offset] == closeChar) {
-          return false;
-        }
-        if (_bytes[_offset] == 44) {
-          _offset++;
-          _topState = 3;
-          _skipWs();
+        if (_topState == 3) {
           if (_offset >= _bytes.length) {
             throw FormatException(
               'Unexpected end of document after comma',
@@ -2084,26 +2077,64 @@ final class _JsonTokenReader implements JsonTokenReader {
             );
           }
           return true;
+        } else if (_topState == 0) {
+          if (_offset >= _bytes.length) return false;
+          if (_bytes[_offset] == closeChar) {
+            return false;
+          }
+          return true;
+        } else if (_topState == 2) {
+          if (_offset >= _bytes.length) return false;
+          if (_bytes[_offset] == closeChar) {
+            return false;
+          }
+          if (_bytes[_offset] == 44) {
+            _offset++;
+            _topState = 3;
+            _skipWs();
+            if (_offset >= _bytes.length) {
+              throw FormatException(
+                'Unexpected end of document after comma',
+                _bytes,
+                _offset,
+              );
+            }
+            if (_bytes[_offset] == 125 || _bytes[_offset] == 93) {
+              throw FormatException(
+                'Trailing comma before $closeStr at offset $_offset',
+              );
+            }
+            return true;
+          }
+          throw FormatException('Expected "," or $closeStr at offset $_offset');
+        } else if (_topState == 1) {
+          if (_offset >= _bytes.length) {
+            throw FormatException(
+              'Unexpected end of document after property name',
+              _bytes,
+              _offset,
+            );
+          }
+          return true;
         }
-        throw FormatException('Expected "," or $closeStr at offset $_offset');
-      } else if (_topState == 1) {
-        if (_offset >= _bytes.length) {
-          throw FormatException(
-            'Unexpected end of document after property name',
-            _bytes,
-            _offset,
-          );
+      } else {
+        if (_hasReadRoot || _offset >= _bytes.length) {
+          return false;
         }
-        return true;
       }
-    } else {
-      if (_hasReadRoot || _offset >= _bytes.length) {
-        return false;
-      }
+      final b = _bytes[_offset];
+      return b != 125 && b != 93;
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
     }
-    final b = _bytes[_offset];
-    return b != 125 && b != 93;
-  });
+  }
 
   (int, int) _scanStringSpan() {
     _skipWs();
@@ -2234,107 +2265,167 @@ final class _JsonTokenReader implements JsonTokenReader {
   @override
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
-  String nextName() => _restoringOnError(() {
-    final (start, end, _) = _scanNameSpanAndConsumeColon();
-    return _decodeCachedString(start, end);
-  });
+  String nextName() {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      final (start, end, _) = _scanNameSpanAndConsumeColon();
+      return _decodeCachedString(start, end);
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
+    }
+  }
 
   @override
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
-  int selectName(JsonKeyOptions options) => _restoringOnError(() {
-    final (start, end, hadEscapesOrNonAscii) = _scanNameSpanAndConsumeColon();
+  int selectName(JsonKeyOptions options) {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      final (start, end, hadEscapesOrNonAscii) = _scanNameSpanAndConsumeColon();
 
-    if (!hadEscapesOrNonAscii) {
-      return options.selectKey(_bytes, start, end);
-    }
-
-    final unescaped = _decodeCachedString(start, end);
-    return options.indexOf(unescaped);
-  });
-
-  @override
-  int selectString(JsonKeyOptions options) => _restoringOnError(() {
-    _beforeReadingValue();
-    var i = _offset;
-    while (i < _bytes.length && _isWs(_bytes[i])) {
-      i++;
-    }
-    if (i >= _bytes.length || _bytes[i] != 34) {
-      throw FormatException('Expected string at offset $i', _bytes, i);
-    }
-    final start = i + 1;
-    final end = _skipStringLiteral(_bytes, start);
-    i = end + 1;
-
-    var j = i;
-    while (j < _bytes.length && _isWs(_bytes[j])) {
-      j++;
-    }
-    if (_stackLength > 0) {
-      if (j < _bytes.length && _bytes[j] == 44) {
-        j++;
-        while (j < _bytes.length && _isWs(_bytes[j])) {
-          j++;
-        }
-        _topState = 3;
-        _offset = j;
-      } else {
-        _topState = 2;
-        _offset = j;
+      if (!hadEscapesOrNonAscii) {
+        return options.selectKey(_bytes, start, end);
       }
-    } else {
-      _hasReadRoot = true;
-      _offset = j;
-    }
 
-    if (_isVerbatimUtf8(_bytes, start, end)) {
-      return options.selectKey(_bytes, start, end);
+      final unescaped = _decodeCachedString(start, end);
+      return options.indexOf(unescaped);
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
     }
-
-    final unescaped = _decodeCachedString(start, end);
-    return options.indexOf(unescaped);
-  });
+  }
 
   @override
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
-  (int start, int end) readStringSpan() => _restoringOnError(() {
-    _beforeReadingValue();
-    var i = _offset;
-    while (i < _bytes.length && _isWs(_bytes[i])) {
-      i++;
-    }
-    if (i >= _bytes.length || _bytes[i] != 34) {
-      throw FormatException('Expected string at offset $i', _bytes, i);
-    }
-    final start = i + 1;
-    final end = _skipStringLiteral(_bytes, start);
-    i = end + 1;
+  int selectString(JsonKeyOptions options) {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      _beforeReadingValue();
+      var i = _offset;
+      if (i >= _bytes.length || _bytes[i] != 34) {
+        throw FormatException('Expected string at offset $i', _bytes, i);
+      }
+      final start = i + 1;
+      final end = _skipStringLiteral(_bytes, start);
+      i = end + 1;
 
-    var j = i;
-    while (j < _bytes.length && _isWs(_bytes[j])) {
-      j++;
-    }
-    if (_stackLength > 0) {
-      if (j < _bytes.length && _bytes[j] == 44) {
+      var j = i;
+      while (j < _bytes.length && _isWs(_bytes[j])) {
         j++;
-        while (j < _bytes.length && _isWs(_bytes[j])) {
+      }
+      if (_stackLength > 0) {
+        if (j < _bytes.length && _bytes[j] == 44) {
           j++;
+          while (j < _bytes.length && _isWs(_bytes[j])) {
+            j++;
+          }
+          _topState = 3;
+          _offset = j;
+        } else {
+          _topState = 2;
+          _offset = j;
         }
-        _topState = 3;
-        _offset = j;
       } else {
-        _topState = 2;
+        _hasReadRoot = true;
         _offset = j;
       }
-    } else {
-      _hasReadRoot = true;
-      _offset = j;
-    }
 
-    return (start, end);
-  });
+      if (_isVerbatimUtf8(_bytes, start, end)) {
+        return options.selectKey(_bytes, start, end);
+      }
+
+      final unescaped = _decodeCachedString(start, end);
+      return options.indexOf(unescaped);
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
+  (int start, int end) readStringSpan() {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      _beforeReadingValue();
+      var i = _offset;
+      if (i >= _bytes.length || _bytes[i] != 34) {
+        throw FormatException('Expected string at offset $i', _bytes, i);
+      }
+      final start = i + 1;
+      final end = _skipStringLiteral(_bytes, start);
+      i = end + 1;
+
+      var j = i;
+      while (j < _bytes.length && _isWs(_bytes[j])) {
+        j++;
+      }
+      if (_stackLength > 0) {
+        if (j < _bytes.length && _bytes[j] == 44) {
+          j++;
+          while (j < _bytes.length && _isWs(_bytes[j])) {
+            j++;
+          }
+          _topState = 3;
+          _offset = j;
+        } else {
+          _topState = 2;
+          _offset = j;
+        }
+      } else {
+        _hasReadRoot = true;
+        _offset = j;
+      }
+
+      return (start, end);
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
+    }
+  }
 
   @override
   @pragma('vm:prefer-inline')
@@ -2344,12 +2435,11 @@ final class _JsonTokenReader implements JsonTokenReader {
     return _decodeCachedString(start, end);
   }
 
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   (int, int) _scanScalarSpan() {
     _beforeReadingValue();
     var i = _offset;
-    while (i < _bytes.length && _isWs(_bytes[i])) {
-      i++;
-    }
     final start = i;
     while (i < _bytes.length) {
       final b = _bytes[i];
@@ -2384,291 +2474,397 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 
   @override
-  int readInt() => _restoringOnError(() {
-    _beforeReadingValue();
-    var i = _offset;
-    while (i < _bytes.length && _isWs(_bytes[i])) {
-      i++;
-    }
-    if (i >= _bytes.length) {
-      throw FormatException('Unexpected end of document', _bytes, i);
-    }
-    final start = i;
-    if (_bytes[i] == 45) {
-      i++;
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
+  int readInt() {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      _beforeReadingValue();
+      var i = _offset;
       if (i >= _bytes.length) {
-        throw FormatException('Expected digit after "-"', _bytes, i);
+        throw FormatException('Unexpected end of document', _bytes, i);
       }
-    }
-
-    final firstDigit = _bytes[i];
-    if (firstDigit == 48) {
-      i++;
-      if (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
-        throw FormatException(
-          'Leading zero cannot be followed by another digit',
-          _bytes,
-          i,
-        );
-      }
-    } else if (firstDigit >= 49 && firstDigit <= 57) {
-      while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
+      final start = i;
+      if (_bytes[i] == 45) {
         i++;
-      }
-    } else {
-      throw FormatException('Expected digit in number', _bytes, i);
-    }
-
-    if (i < _bytes.length) {
-      final b = _bytes[i];
-      if (b == 46 || b == 101 || b == 69) {
-        throw FormatException(
-          'Invalid integer (found fractional or exponent component)',
-          _bytes,
-          i,
-        );
-      }
-      if (b != 44 && b != 125 && b != 93 && !_isWs(b)) {
-        throw FormatException(
-          'Unexpected character after number: ${String.fromCharCode(b)}',
-          _bytes,
-          i,
-        );
-      }
-    }
-
-    final end = i;
-    final val = _parseIntFromBytes(_bytes, start, end);
-
-    var j = i;
-    while (j < _bytes.length && _isWs(_bytes[j])) {
-      j++;
-    }
-    if (_stackLength > 0) {
-      if (j < _bytes.length && _bytes[j] == 44) {
-        j++;
-        while (j < _bytes.length && _isWs(_bytes[j])) {
-          j++;
+        if (i >= _bytes.length) {
+          throw FormatException('Expected digit after "-"', _bytes, i);
         }
-        _topState = 3;
-        _offset = j;
+      }
+
+      final firstDigit = _bytes[i];
+      if (firstDigit == 48) {
+        i++;
+        if (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
+          throw FormatException(
+            'Leading zero cannot be followed by another digit',
+            _bytes,
+            i,
+          );
+        }
+      } else if (firstDigit >= 49 && firstDigit <= 57) {
+        while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
+          i++;
+        }
       } else {
-        _topState = 2;
+        throw FormatException('Expected digit in number', _bytes, i);
+      }
+
+      if (i < _bytes.length) {
+        final b = _bytes[i];
+        if (b == 46 || b == 101 || b == 69) {
+          throw FormatException(
+            'Invalid integer (found fractional or exponent component)',
+            _bytes,
+            i,
+          );
+        }
+        if (b != 44 && b != 125 && b != 93 && !_isWs(b)) {
+          throw FormatException(
+            'Unexpected character after number: ${String.fromCharCode(b)}',
+            _bytes,
+            i,
+          );
+        }
+      }
+
+      final end = i;
+      final val = _parseIntFromBytes(_bytes, start, end);
+
+      var j = i;
+      while (j < _bytes.length && _isWs(_bytes[j])) {
+        j++;
+      }
+      if (_stackLength > 0) {
+        if (j < _bytes.length && _bytes[j] == 44) {
+          j++;
+          while (j < _bytes.length && _isWs(_bytes[j])) {
+            j++;
+          }
+          _topState = 3;
+          _offset = j;
+        } else {
+          _topState = 2;
+          _offset = j;
+        }
+      } else {
+        _hasReadRoot = true;
         _offset = j;
       }
-    } else {
-      _hasReadRoot = true;
-      _offset = j;
-    }
 
-    return val;
-  });
+      return val;
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
+    }
+  }
 
   @override
-  double readDouble() => _restoringOnError(() {
-    _beforeReadingValue();
-    var i = _offset;
-    while (i < _bytes.length && _isWs(_bytes[i])) {
-      i++;
-    }
-    if (i >= _bytes.length) {
-      throw FormatException('Unexpected end of document', _bytes, i);
-    }
-    final start = i;
-    var isNegative = false;
-    if (_bytes[i] == 45) {
-      isNegative = true;
-      i++;
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
+  double readDouble() {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      _beforeReadingValue();
+      var i = _offset;
       if (i >= _bytes.length) {
-        throw FormatException('Expected digit after "-"', _bytes, i);
+        throw FormatException('Unexpected end of document', _bytes, i);
       }
-    }
-
-    int mantissa = 0;
-    int digitCount = 0;
-    int decimalExp = 0;
-    bool truncatedDigits = false;
-
-    // Integer part
-    final firstDigit = _bytes[i];
-    if (firstDigit == 48) {
-      i++;
-      if (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
-        throw FormatException(
-          'Leading zero cannot be followed by another digit',
-          _bytes,
-          i,
-        );
-      }
-    } else if (firstDigit >= 49 && firstDigit <= 57) {
-      while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
-        if (digitCount < 19) {
-          mantissa = mantissa * 10 + (_bytes[i] - 48);
-          digitCount++;
-        } else {
-          truncatedDigits = true;
-          decimalExp++;
-        }
+      final start = i;
+      var isNegative = false;
+      if (_bytes[i] == 45) {
+        isNegative = true;
         i++;
-      }
-    } else {
-      throw FormatException('Expected digit in number', _bytes, i);
-    }
-
-    // Fraction part (optional)
-    if (i < _bytes.length && _bytes[i] == 46) {
-      i++;
-      if (i >= _bytes.length || _bytes[i] < 48 || _bytes[i] > 57) {
-        throw FormatException('Expected digit after decimal point', _bytes, i);
-      }
-      while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
-        if (mantissa == 0 && _bytes[i] == 48) {
-          decimalExp--;
-        } else if (digitCount < 19) {
-          mantissa = mantissa * 10 + (_bytes[i] - 48);
-          digitCount++;
-          decimalExp--;
-        } else {
-          truncatedDigits = true;
+        if (i >= _bytes.length) {
+          throw FormatException('Expected digit after "-"', _bytes, i);
         }
-        i++;
       }
-    }
 
-    // Exponent part (optional)
-    if (i < _bytes.length && (_bytes[i] == 101 || _bytes[i] == 69)) {
-      i++;
-      var expNeg = false;
-      if (i < _bytes.length && (_bytes[i] == 43 || _bytes[i] == 45)) {
-        if (_bytes[i] == 45) expNeg = true;
+      int mantissa = 0;
+      int digitCount = 0;
+      int decimalExp = 0;
+      bool truncatedDigits = false;
+
+      // Integer part
+      final firstDigit = _bytes[i];
+      if (firstDigit == 48) {
         i++;
-      }
-      if (i >= _bytes.length || _bytes[i] < 48 || _bytes[i] > 57) {
-        throw FormatException('Expected digit in exponent', _bytes, i);
-      }
-      var explicitExp = 0;
-      var expSaturated = false;
-      while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
-        if (explicitExp < 10000) {
-          explicitExp = explicitExp * 10 + (_bytes[i] - 48);
-        } else {
-          expSaturated = true;
+        if (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
+          throw FormatException(
+            'Leading zero cannot be followed by another digit',
+            _bytes,
+            i,
+          );
         }
-        i++;
-      }
-      decimalExp += expNeg ? -explicitExp : explicitExp;
-      // Clamp extreme exponents to ±100,000 to prevent integer overflow while
-      // preserving exact zero/infinite float scaling during fast-path parsing.
-      if (expSaturated) {
-        decimalExp = expNeg ? -100000 : 100000;
-      }
-    }
-
-    if (i < _bytes.length) {
-      final b = _bytes[i];
-      if (b != 44 && b != 125 && b != 93 && !_isWs(b)) {
-        throw FormatException(
-          'Unexpected character after number: ${String.fromCharCode(b)}',
-          _bytes,
-          i,
-        );
-      }
-    }
-
-    final end = i;
-
-    var j = i;
-    while (j < _bytes.length && _isWs(_bytes[j])) {
-      j++;
-    }
-    if (_stackLength > 0) {
-      if (j < _bytes.length && _bytes[j] == 44) {
-        j++;
-        while (j < _bytes.length && _isWs(_bytes[j])) {
-          j++;
+      } else if (firstDigit >= 49 && firstDigit <= 57) {
+        while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
+          if (digitCount < 19) {
+            mantissa = mantissa * 10 + (_bytes[i] - 48);
+            digitCount++;
+          } else {
+            truncatedDigits = true;
+            decimalExp++;
+          }
+          i++;
         }
-        _topState = 3;
-        _offset = j;
       } else {
-        _topState = 2;
+        throw FormatException('Expected digit in number', _bytes, i);
+      }
+
+      // Fraction part (optional)
+      if (i < _bytes.length && _bytes[i] == 46) {
+        i++;
+        if (i >= _bytes.length || _bytes[i] < 48 || _bytes[i] > 57) {
+          throw FormatException(
+            'Expected digit after decimal point',
+            _bytes,
+            i,
+          );
+        }
+        while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
+          if (mantissa == 0 && _bytes[i] == 48) {
+            decimalExp--;
+          } else if (digitCount < 19) {
+            mantissa = mantissa * 10 + (_bytes[i] - 48);
+            digitCount++;
+            decimalExp--;
+          } else {
+            truncatedDigits = true;
+          }
+          i++;
+        }
+      }
+
+      // Exponent part (optional)
+      if (i < _bytes.length && (_bytes[i] == 101 || _bytes[i] == 69)) {
+        i++;
+        var expNeg = false;
+        if (i < _bytes.length && (_bytes[i] == 43 || _bytes[i] == 45)) {
+          if (_bytes[i] == 45) expNeg = true;
+          i++;
+        }
+        if (i >= _bytes.length || _bytes[i] < 48 || _bytes[i] > 57) {
+          throw FormatException('Expected digit in exponent', _bytes, i);
+        }
+        var explicitExp = 0;
+        var expSaturated = false;
+        while (i < _bytes.length && _bytes[i] >= 48 && _bytes[i] <= 57) {
+          if (explicitExp < 10000) {
+            explicitExp = explicitExp * 10 + (_bytes[i] - 48);
+          } else {
+            expSaturated = true;
+          }
+          i++;
+        }
+        decimalExp += expNeg ? -explicitExp : explicitExp;
+        // Clamp extreme exponents to ±100,000 to prevent integer overflow while
+        // preserving exact zero/infinite float scaling during fast-path parsing.
+        if (expSaturated) {
+          decimalExp = expNeg ? -100000 : 100000;
+        }
+      }
+
+      if (i < _bytes.length) {
+        final b = _bytes[i];
+        if (b != 44 && b != 125 && b != 93 && !_isWs(b)) {
+          throw FormatException(
+            'Unexpected character after number: ${String.fromCharCode(b)}',
+            _bytes,
+            i,
+          );
+        }
+      }
+
+      final end = i;
+
+      var j = i;
+      while (j < _bytes.length && _isWs(_bytes[j])) {
+        j++;
+      }
+      if (_stackLength > 0) {
+        if (j < _bytes.length && _bytes[j] == 44) {
+          j++;
+          while (j < _bytes.length && _isWs(_bytes[j])) {
+            j++;
+          }
+          _topState = 3;
+          _offset = j;
+        } else {
+          _topState = 2;
+          _offset = j;
+        }
+      } else {
+        _hasReadRoot = true;
         _offset = j;
       }
-    } else {
-      _hasReadRoot = true;
-      _offset = j;
-    }
 
-    if (mantissa == 0) {
-      return isNegative ? -0.0 : 0.0;
-    }
+      if (mantissa == 0) {
+        return isNegative ? -0.0 : 0.0;
+      }
 
-    if (decimalExp == 0 &&
-        !truncatedDigits &&
-        _unsignedLe(mantissa, 0x001FFFFFFFFFFFFF)) {
-      return isNegative ? -mantissa.toDouble() : mantissa.toDouble();
-    }
+      if (decimalExp == 0 &&
+          !truncatedDigits &&
+          _unsignedLe(mantissa, 0x001FFFFFFFFFFFFF)) {
+        return isNegative ? -mantissa.toDouble() : mantissa.toDouble();
+      }
 
-    var result = _tryParseDoubleFastEiselLemire(
-      mantissa,
-      decimalExp,
-      isNegative,
-    );
-    if (result != null && truncatedDigits) {
-      final resultPlus1 = _tryParseDoubleFastEiselLemire(
-        mantissa + 1,
+      var result = _tryParseDoubleFastEiselLemire(
+        mantissa,
         decimalExp,
         isNegative,
       );
-      if (resultPlus1 != result) {
-        result = null;
+      if (result != null && truncatedDigits) {
+        final resultPlus1 = _tryParseDoubleFastEiselLemire(
+          mantissa + 1,
+          decimalExp,
+          isNegative,
+        );
+        if (resultPlus1 != result) {
+          result = null;
+        }
       }
-    }
-    if (result != null) return result;
+      if (result != null) return result;
 
-    return _parseDoubleFromBytes(_bytes, start, end);
-  });
+      return _parseDoubleFromBytes(_bytes, start, end);
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
+    }
+  }
 
   @override
-  num readNum() => _restoringOnError(() {
-    final (start, end) = _scanScalarSpan();
-    final asInt = _tryParseIntFromBytes(_bytes, start, end);
-    if (asInt != null) return asInt;
-    return _parseDoubleFromBytes(_bytes, start, end);
-  });
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
+  num readNum() {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      final (start, end) = _scanScalarSpan();
+      final asInt = _tryParseIntFromBytes(_bytes, start, end);
+      if (asInt != null) return asInt;
+      return _parseDoubleFromBytes(_bytes, start, end);
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
+    }
+  }
 
   @override
-  bool readBool() => _restoringOnError(() {
-    final (start, end) = _scanScalarSpan();
-    return _parseBoolFromBytes(_bytes, start, end);
-  });
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
+  bool readBool() {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      final (start, end) = _scanScalarSpan();
+      return _parseBoolFromBytes(_bytes, start, end);
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
+    }
+  }
 
   @override
-  void readNull() => _restoringOnError(() {
-    final (start, end) = _scanScalarSpan();
-    if (!_isNullUtf8(_bytes, start, end)) {
-      throw FormatException('Expected null at offset $start');
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
+  void readNull() {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      final (start, end) = _scanScalarSpan();
+      if (!_isNullUtf8(_bytes, start, end)) {
+        throw FormatException('Expected null at offset $start');
+      }
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
     }
-  });
+  }
 
   @override
-  void skipValue() => _restoringOnError(() {
-    if (_stackLength > 0 && _topType == 0 && _topState != 1) {
-      _scanNameSpanAndConsumeColon();
-      skipValue();
-      return;
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
+  void skipValue() {
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      if (_stackLength > 0 && _topType == 0 && _topState != 1) {
+        _scanNameSpanAndConsumeColon();
+        skipValue();
+        return;
+      }
+      _beforeReadingValue();
+      if (_offset >= _bytes.length) return;
+      final b = _bytes[_offset];
+      if (b == 123 || b == 91) {
+        _offset = _skipValue(_bytes, _offset);
+      } else if (b == 34) {
+        _scanStringSpan();
+      } else {
+        _offset = _skipScalar(_bytes, _offset);
+      }
+      _afterReadingValue();
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
     }
-    _beforeReadingValue();
-    if (_offset >= _bytes.length) return;
-    final b = _bytes[_offset];
-    if (b == 123 || b == 91) {
-      _offset = _skipValue(_bytes, _offset);
-    } else if (b == 34) {
-      _scanStringSpan();
-    } else {
-      _offset = _skipScalar(_bytes, _offset);
-    }
-    _afterReadingValue();
-  });
+  }
 
   @override
   (int start, int end) getTokenSpan() {
