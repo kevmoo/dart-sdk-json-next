@@ -3218,7 +3218,7 @@ class _JsonTokenReader {
   }
 
   @patch
-  (int, int) _scanNameSpanAndConsumeColon() {
+  (int, int, bool) _scanNameSpanAndConsumeColon() {
     final _len = _bytes.length;
     final prevOffset = _offset;
     final prevStackLen = _stackLength;
@@ -3257,7 +3257,12 @@ class _JsonTokenReader {
       }
       _offset = i;
       _topState = 1;
-      return (start, end);
+      final hadEscapesOrNonAscii = !_isVerbatimAscii(
+        d,
+        base + start,
+        base + end,
+      );
+      return (start, end, hadEscapesOrNonAscii);
     } catch (_) {
       _offset = prevOffset;
       _stackLength = prevStackLen;
@@ -3270,7 +3275,7 @@ class _JsonTokenReader {
 
   @patch
   String nextName() {
-    final (start, end) = _scanNameSpanAndConsumeColon();
+    final (start, end, _) = _scanNameSpanAndConsumeColon();
     return _decodeCachedString(start, end);
   }
 
@@ -3403,11 +3408,9 @@ class _JsonTokenReader {
     final prevTopState = _topState;
     final prevHasReadRoot = _hasReadRoot;
     try {
-      final (start, end) = _scanNameSpanAndConsumeColon();
+      final (start, end, hadEscapesOrNonAscii) = _scanNameSpanAndConsumeColon();
 
-      final d = _data;
-      final base = _offsetInElements;
-      if (_isVerbatimAscii(d, base + start, base + end)) {
+      if (!hadEscapesOrNonAscii) {
         return options.selectKey(_bytes, start, end);
       }
 
