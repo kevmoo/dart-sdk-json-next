@@ -875,6 +875,31 @@ void testTokenReaderCursorRollbackOnFormatException() {
     reader.endObject();
   }
 
+  // Test rollback in object value on readString with malformed UTF-8
+  {
+    final rawBytes = Uint8List.fromList([
+      ...b('{"bad": "'),
+      0xFF,
+      ...b('", "good": "ok"}'),
+    ]);
+    final reader = JsonTokenReader.fromBytes(rawBytes);
+    reader.beginObject();
+    Expect.equals('bad', reader.nextName());
+
+    // Malformed UTF-8 0xFF passes readStringSpan but throws in _decodeCachedString
+    Expect.throwsFormatException(() => reader.readString());
+
+    // Cursor was rolled back so readStringSpan can still read the raw byte span
+    final (start, end) = reader.readStringSpan();
+    Expect.equals(1, end - start);
+    Expect.equals(0xFF, rawBytes[start]);
+    Expect.isTrue(reader.hasNext());
+    Expect.equals('good', reader.nextName());
+    Expect.equals('ok', reader.readString());
+    Expect.isFalse(reader.hasNext());
+    reader.endObject();
+  }
+
   // Test rollback on readDouble, readBool, readNull in array
   {
     final raw = '[10, "abc", true, null, 30]';
