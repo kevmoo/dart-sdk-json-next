@@ -3275,8 +3275,22 @@ class _JsonTokenReader {
 
   @patch
   String nextName() {
-    final (start, end, _) = _scanNameSpanAndConsumeColon();
-    return _decodeCachedString(start, end);
+    final prevOffset = _offset;
+    final prevStackLen = _stackLength;
+    final prevTopType = _topType;
+    final prevTopState = _topState;
+    final prevHasReadRoot = _hasReadRoot;
+    try {
+      final (start, end, _) = _scanNameSpanAndConsumeColon();
+      return _decodeCachedString(start, end);
+    } catch (_) {
+      _offset = prevOffset;
+      _stackLength = prevStackLen;
+      _topType = prevTopType;
+      _topState = prevTopState;
+      _hasReadRoot = prevHasReadRoot;
+      rethrow;
+    }
   }
 
   @patch
@@ -3292,9 +3306,6 @@ class _JsonTokenReader {
       final d = _data;
       final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(d.readUnsigned(base + i))) {
-        i++;
-      }
       if (i >= _len || d.readUnsigned(base + i) != 34) {
         throw FormatException('Expected string at offset $i', _bytes, i);
       }
@@ -3336,8 +3347,22 @@ class _JsonTokenReader {
 
   @patch
   String readString() {
-    final (start, end) = readStringSpan();
-    return _decodeCachedString(start, end);
+    final prevOffset = _offset;
+    final prevStackLen = _stackLength;
+    final prevTopType = _topType;
+    final prevTopState = _topState;
+    final prevHasReadRoot = _hasReadRoot;
+    try {
+      final (start, end) = readStringSpan();
+      return _decodeCachedString(start, end);
+    } catch (_) {
+      _offset = prevOffset;
+      _stackLength = prevStackLen;
+      _topType = prevTopType;
+      _topState = prevTopState;
+      _hasReadRoot = prevHasReadRoot;
+      rethrow;
+    }
   }
 
   @patch
@@ -3353,9 +3378,6 @@ class _JsonTokenReader {
       final d = _data;
       final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(d.readUnsigned(base + i))) {
-        i++;
-      }
       if (i >= _len || d.readUnsigned(base + i) != 34) {
         throw FormatException('Expected string at offset $i', _bytes, i);
       }
@@ -3439,9 +3461,6 @@ class _JsonTokenReader {
       final d = _data;
       final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(d.readUnsigned(base + i))) {
-        i++;
-      }
       if (i >= _len) {
         throw FormatException('Unexpected end of document', _bytes, i);
       }
@@ -3541,9 +3560,6 @@ class _JsonTokenReader {
       final d = _data;
       final base = _offsetInElements;
       var i = _offset;
-      while (i < _len && _isWs(d.readUnsigned(base + i))) {
-        i++;
-      }
       if (i >= _len) {
         throw FormatException('Unexpected end of document', _bytes, i);
       }

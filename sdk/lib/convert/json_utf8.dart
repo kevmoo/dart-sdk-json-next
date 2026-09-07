@@ -2431,8 +2431,24 @@ final class _JsonTokenReader implements JsonTokenReader {
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
   String readString() {
-    final (start, end) = readStringSpan();
-    return _decodeCachedString(start, end);
+    final initialOffset = _offset;
+    final initialStackLen = _stackLength;
+    final initialTopType = _topType;
+    final initialTopState = _topState;
+    final hadReadRoot = _hasReadRoot;
+    try {
+      final (start, end) = readStringSpan();
+      return _decodeCachedString(start, end);
+    } catch (_) {
+      _restoreState(
+        initialOffset,
+        initialStackLen,
+        initialTopType,
+        initialTopState,
+        hadReadRoot,
+      );
+      rethrow;
+    }
   }
 
   @pragma('vm:prefer-inline')
