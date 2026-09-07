@@ -1655,7 +1655,6 @@ final class _JsonTokenReader implements JsonTokenReader {
   static const int _maxCachedStringLength = 64;
 
   final Uint8List _bytes;
-  final ByteData _byteData;
   final bool allowMalformed;
   int _offset = 0;
   Uint8List _stack = Uint8List(64);
@@ -1663,6 +1662,7 @@ final class _JsonTokenReader implements JsonTokenReader {
   int _topType = -1; // -1: none, 0: object, 1: array
   int _topState = 0; // 0: start, 1: afterName, 2: afterValue, 3: afterComma
   bool _hasReadRoot = false;
+  bool _lastScanHadEscapes = false;
   final List<String?> _stringCache = List<String?>.filled(
     _stringCacheSize,
     null,
@@ -1671,41 +1671,19 @@ final class _JsonTokenReader implements JsonTokenReader {
   @override
   Uint8List get bytes => _bytes;
 
-  Int64List? _tape;
-  int _tapeIndex = 0;
-  int _tapeCount = 0;
-
-  _JsonTokenReader(this._bytes, {this.allowMalformed = false})
-    : _byteData = ByteData.sublistView(_bytes) {
+  _JsonTokenReader(this._bytes, {this.allowMalformed = false}) {
     if (_bytes.length >= 3 &&
         _bytes[0] == 0xEF &&
         _bytes[1] == 0xBB &&
         _bytes[2] == 0xBF) {
       _offset = 3;
     }
-
-    // Attempt to invoke the native VM C++ structural tape intrinsic
-    final tapeResult = _parseToTapeNative(_bytes);
-    if (tapeResult != null) {
-      _tape = tapeResult.$1;
-      _tapeCount = tapeResult.$2;
-    }
   }
 
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void _skipWs() {
-    if (_tape != null) {
-      while (_tapeIndex < _tapeCount &&
-          ((_tape![_tapeIndex] >> 32) < _offset)) {
-        _tapeIndex++;
-      }
-      if (_tapeIndex < _tapeCount) {
-        _offset = _tape![_tapeIndex] >> 32;
-      } else {
-        _offset = _bytes.length; // EOF
-      }
-      return;
-    }
-    while (_offset < _bytes.length && _isWs(_bytes[_offset])) {
+    while (_offset < _bytes.length && _bytes[_offset] <= 0x20) {
       _offset++;
     }
   }
@@ -2139,24 +2117,63 @@ final class _JsonTokenReader implements JsonTokenReader {
     return (start, end);
   }
 
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   (int, int) _scanNameSpanAndConsumeColon() {
     _beforeReadingName();
     var i = _offset;
-    while (i < _bytes.length && _isWs(_bytes[i])) {
+    while (i < _bytes.length && _bytes[i] <= 0x20) {
       i++;
     }
     if (i >= _bytes.length || _bytes[i] != 34) {
       throw FormatException('Expected string at offset $i', _bytes, i);
     }
     final start = i + 1;
-    final end = _skipStringLiteral(_bytes, start);
+    var hasEscapes = false;
+    var maxByte = 0;
+    var end = start;
+    while (true) {
+      if (end >= _bytes.length) {
+        throw FormatException(
+          'Unterminated string literal at offset $start',
+          _bytes,
+          start,
+        );
+      }
+      final b = _bytes[end];
+      if (b == 34) {
+        break;
+      }
+      if (b < 32) {
+        throw FormatException(
+          'Unescaped control character in string at offset $end',
+          _bytes,
+          end,
+        );
+      }
+      if (b == 92) {
+        hasEscapes = true;
+        end += 2;
+        if (end > _bytes.length) {
+          throw FormatException(
+            'Unterminated string escape at offset ${end - 2}',
+            _bytes,
+            end - 2,
+          );
+        }
+      } else {
+        maxByte |= b;
+        end++;
+      }
+    }
+    _lastScanHadEscapes = hasEscapes || maxByte >= 0x80;
     i = end + 1;
 
     // Fused colon consumption & trailing whitespace
     if (i < _bytes.length && _bytes[i] == 58) {
       i++;
     } else {
-      while (i < _bytes.length && _isWs(_bytes[i])) {
+      while (i < _bytes.length && _bytes[i] <= 0x20) {
         i++;
       }
       if (i >= _bytes.length || _bytes[i] != 58) {
@@ -2164,7 +2181,7 @@ final class _JsonTokenReader implements JsonTokenReader {
       }
       i++;
     }
-    while (i < _bytes.length && _isWs(_bytes[i])) {
+    while (i < _bytes.length && _bytes[i] <= 0x20) {
       i++;
     }
     _offset = i;
@@ -2217,16 +2234,20 @@ final class _JsonTokenReader implements JsonTokenReader {
   }
 
   @override
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   String nextName() => _restoringOnError(() {
     final (start, end) = _scanNameSpanAndConsumeColon();
     return _decodeCachedString(start, end);
   });
 
   @override
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   int selectName(JsonKeyOptions options) => _restoringOnError(() {
     final (start, end) = _scanNameSpanAndConsumeColon();
 
-    if (_isVerbatimUtf8(_bytes, start, end)) {
+    if (!_lastScanHadEscapes) {
       return options.selectKey(_bytes, start, end);
     }
 
@@ -2283,7 +2304,7 @@ final class _JsonTokenReader implements JsonTokenReader {
   (int start, int end) readStringSpan() => _restoringOnError(() {
     _beforeReadingValue();
     var i = _offset;
-    while (i < _bytes.length && _isWs(_bytes[i])) {
+    while (i < _bytes.length && _bytes[i] <= 0x20) {
       i++;
     }
     if (i >= _bytes.length || _bytes[i] != 34) {
@@ -2294,13 +2315,13 @@ final class _JsonTokenReader implements JsonTokenReader {
     i = end + 1;
 
     var j = i;
-    while (j < _bytes.length && _isWs(_bytes[j])) {
+    while (j < _bytes.length && _bytes[j] <= 0x20) {
       j++;
     }
     if (_stackLength > 0) {
       if (j < _bytes.length && _bytes[j] == 44) {
         j++;
-        while (j < _bytes.length && _isWs(_bytes[j])) {
+        while (j < _bytes.length && _bytes[j] <= 0x20) {
           j++;
         }
         _topState = 3;
@@ -2320,10 +2341,10 @@ final class _JsonTokenReader implements JsonTokenReader {
   @override
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
-  String readString() => _restoringOnError(() {
+  String readString() {
     final (start, end) = readStringSpan();
     return _decodeCachedString(start, end);
-  });
+  }
 
   (int, int) _scanScalarSpan() {
     _beforeReadingValue();
