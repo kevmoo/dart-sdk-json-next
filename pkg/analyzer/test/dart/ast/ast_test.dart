@@ -752,7 +752,7 @@ void f() {
   a?[0];
 }
 ''');
-    var expression = parseResult.findNode.indexExpression2('[0]');
+    var expression = parseResult.findNode.receiverIndexExpression('[0]');
     expect(expression.question, isNotNull);
   }
 }
@@ -1285,7 +1285,7 @@ void f() {
   a..foo;
 }
 ''');
-    var invocation = parseResult.findNode.propertyAccess('foo');
+    var invocation = parseResult.findNodeV1.propertyAccess('foo');
     expect(invocation.isNullAware, isFalse);
   }
 
@@ -1295,7 +1295,7 @@ void f() {
   a?..foo;
 }
 ''');
-    var invocation = parseResult.findNode.propertyAccess('foo');
+    var invocation = parseResult.findNodeV1.propertyAccess('foo');
     expect(invocation.isNullAware, isTrue);
   }
 
@@ -1305,7 +1305,7 @@ void f() {
   (a).call;
 }
 ''');
-    var invocation = parseResult.findNode.propertyAccess('call');
+    var invocation = parseResult.findNodeV1.propertyAccess('call');
     expect(invocation.isNullAware, isFalse);
   }
 

@@ -520,6 +520,10 @@ class ConstantsTransformer extends RemovingTransformer {
     TreeNode result = constantEvaluator.withNewEnvironment(() {
       Expression? initializer = node.initializer;
       if (node.isConst) {
+        assert(
+          initializer != null,
+          "Missing initializer on constant field $node.",
+        );
         transformAnnotations(node.annotations, node);
         initializer = node.initializer = evaluateAndTransformWithContext(
           node,
@@ -993,7 +997,7 @@ class ConstantsTransformer extends RemovingTransformer {
           expressions.add(
             extern.createConstantExpression(
               constantPattern.value!,
-              constantPattern.expressionType!,
+              constantPattern.expressionType,
               fileOffset: constantPattern.expression.fileOffset,
             ),
           );
@@ -1319,12 +1323,15 @@ class ConstantsTransformer extends RemovingTransformer {
 
           replacementCases.add(replacementCase);
         } else {
-          caseBlock = extern.createBlock([
-            for (VariableDeclaration jointVariableDeclaration
-                in switchCase.jointVariableDeclarations)
-              extern.createVariableStatement(jointVariableDeclaration),
-            if (body is! Block || body.statements.isNotEmpty) body,
-          ], fileOffset: switchCase.fileOffset);
+          caseBlock = extern.createBlock(
+            [
+              for (VariableDeclaration jointVariableDeclaration
+                  in switchCase.jointVariableDeclarations)
+                extern.createVariableStatement(jointVariableDeclaration),
+              if (body is! Block || body.statements.isNotEmpty) body,
+            ],
+            fileOffset: switchCase.fileOffset,
+          )..scope = switchCase.jointVariableScope;
         }
 
         if (caseCondition != null) {
@@ -1363,7 +1370,7 @@ class ConstantsTransformer extends RemovingTransformer {
             if (breakStatement != null)
               // Coverage-ignore(suite): Not run.
               breakStatement,
-          ], fileOffset: switchCase.fileOffset),
+          ], fileOffset: switchCase.fileOffset)..scope = switchCase.scope,
         );
       }
 
@@ -1599,7 +1606,7 @@ class ConstantsTransformer extends RemovingTransformer {
         new MatchingExpressionVisitor(matchingCache, typeEnvironment.coreTypes);
     CacheableExpression matchedExpression = matchingCache.createRootExpression(
       node.expression,
-      node.matchedValueType!,
+      node.matchedValueType,
     );
     // This expression is used, even if the matching expression doesn't read it.
     matchedExpression.registerUse();
@@ -1693,7 +1700,7 @@ class ConstantsTransformer extends RemovingTransformer {
           otherwise: node.otherwise,
           fileOffset: node.fileOffset,
         ),
-      ], fileOffset: node.fileOffset);
+      ], fileOffset: node.fileOffset)..scope = node.scope;
     } else {
       ifStatement = extern.createIfStatement(
         condition,
@@ -1721,7 +1728,7 @@ class ConstantsTransformer extends RemovingTransformer {
     MatchingCache matchingCache = createMatchingCache();
     MatchingExpressionVisitor matchingExpressionVisitor =
         new MatchingExpressionVisitor(matchingCache, typeEnvironment.coreTypes);
-    DartType matchedType = node.matchedValueType!;
+    DartType matchedType = node.matchedValueType;
     CacheableExpression matchedExpression = matchingCache.createRootExpression(
       node.initializer,
       matchedType,
@@ -1817,7 +1824,7 @@ class ConstantsTransformer extends RemovingTransformer {
     MatchingCache matchingCache = createMatchingCache();
     MatchingExpressionVisitor matchingExpressionVisitor =
         new MatchingExpressionVisitor(matchingCache, typeEnvironment.coreTypes);
-    DartType matchedType = node.matchedValueType!;
+    DartType matchedType = node.matchedValueType;
     CacheableExpression matchedExpression = matchingCache.createRootExpression(
       node.expression,
       matchedType,
@@ -2056,7 +2063,7 @@ class ConstantsTransformer extends RemovingTransformer {
         expressions.add(
           extern.createConstantExpression(
             constantPattern.value!,
-            constantPattern.expressionType!,
+            constantPattern.expressionType,
             fileOffset: constantPattern.expression.fileOffset,
           ),
         );
@@ -2224,7 +2231,7 @@ class ConstantsTransformer extends RemovingTransformer {
               ], fileOffset: switchCase.fileOffset),
               fileOffset: switchCase.fileOffset,
             ),
-          ], fileOffset: switchCase.fileOffset),
+          ], fileOffset: switchCase.fileOffset)..scope = switchCase.scope,
         );
       }
       bool forUnsoundness = false;

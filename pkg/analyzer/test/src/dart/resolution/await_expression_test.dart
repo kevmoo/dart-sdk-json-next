@@ -117,7 +117,14 @@ void f() async {
     assertResolvedNodeText(node, r'''
 AwaitExpression
   awaitKeyword: await
-  expression2: SimpleIdentifier
+  expression2: UnqualifiedNameExpression
+    name: unresolved
+    resolution: InvalidNamedReadResolution
+      type: InvalidType
+      candidates
+      recovery: <null>
+    staticType: InvalidType
+  expression(v1): SimpleIdentifier
     token: unresolved
     element: <null>
     staticType: InvalidType
@@ -140,7 +147,18 @@ void f() async {
     assertResolvedNodeText(node, r'''
 AwaitExpression
   awaitKeyword: await
-  expression2: PrefixedIdentifier
+  expression2: ImportPrefixedNameExpression
+    importPrefix: ImportPrefixReference
+      name: prefix
+      period: .
+      element: <testLibraryFragment>::@prefix::prefix
+    name: unresolved
+    resolution: InvalidNamedReadResolution
+      type: InvalidType
+      candidates
+      recovery: <null>
+    staticType: InvalidType
+  expression(v1): PrefixedIdentifier
     prefix: SimpleIdentifier
       token: prefix
       element: <testLibraryFragment>::@prefix::prefix
@@ -169,20 +187,20 @@ void f() async {
     assertResolvedNodeText(node, r'''
 AwaitExpression
   awaitKeyword: await
-  expression2: PropertyExtraction
-    receiver: PropertyExtraction
+  expression2: ReceiverPropertyExtraction
+    receiver: ReceiverPropertyExtraction
       receiver: IntegerLiteral
         literal: 0
         staticType: int
       operator: .
-      propertyName: isEven
+      name: isEven
       resolution: GetterInvocationResolution
         element: dart:core::@class::int::@getter::isEven
         invokeType: bool Function()
         type: bool
       staticType: bool
     operator: .
-    propertyName: unresolved
+    name: unresolved
     resolution: InvalidNamedReadResolution
       type: InvalidType
       candidates

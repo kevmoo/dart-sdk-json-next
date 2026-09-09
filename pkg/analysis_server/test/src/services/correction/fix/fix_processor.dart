@@ -3,6 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'package:analysis_server/src/services/correction/bulk_fix_processor.dart';
+import 'package:analysis_server/src/services/correction/fix_internal.dart';
 import 'package:analysis_server_plugin/edit/dart/dart_fix_kind_priority.dart';
 import 'package:analysis_server_plugin/edit/fix/dart_fix_context.dart';
 import 'package:analysis_server_plugin/edit/fix/fix.dart';
@@ -13,10 +14,12 @@ import 'package:analysis_server_plugin/src/correction/fix_processor.dart';
 import 'package:analyzer/diagnostic/diagnostic.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/file_system/file_system.dart';
+import 'package:analyzer/src/dart/analysis/byte_store.dart';
 import 'package:analyzer/src/test_utilities/test_code_format.dart';
 import 'package:analyzer/src/util/sdk.dart';
 import 'package:analyzer_plugin/protocol/protocol_common.dart'
     hide AnalysisError;
+import 'package:linter/src/rules.dart';
 import 'package:test/test.dart';
 
 import '../../../../abstract_single_unit.dart';
@@ -40,6 +43,8 @@ abstract class BaseFixProcessorTest extends AbstractSingleUnitTest {
 
   @override
   void setUp() {
+    registerLintRules();
+    registerBuiltInFixGenerators();
     super.setUp();
     verifyNoTestUnitErrors = false;
   }
@@ -103,6 +108,8 @@ abstract class BaseFixProcessorTest extends AbstractSingleUnitTest {
 /// apply a fix, then the code is valid after applying as many fixes as possible
 /// in a single pass.
 abstract class BulkFixProcessorTest extends AbstractSingleUnitTest {
+  final ByteStore _byteStore = MemoryByteStore();
+
   /// The source change associated with the fix that was found, or `null` if
   /// neither [assertHasFix] nor [assertHasFixAllFix] has been invoked.
   late SourceChange change;
@@ -131,11 +138,11 @@ abstract class BulkFixProcessorTest extends AbstractSingleUnitTest {
     String expected, {
     File? file,
   }) async {
-    var analysisContext = contextFor(file ?? testFile);
+    var analysisContext = contextFor2(file ?? testFile);
     var processor = BulkFixProcessor(
       TestInstrumentationService(),
       await workspace,
-      byteStore: byteStore,
+      byteStore: _byteStore,
     );
     var fixes = (await processor.fixPubspec([analysisContext])).edits;
     var edits = [for (var fix in fixes) ...fix.edits];
@@ -144,11 +151,11 @@ abstract class BulkFixProcessorTest extends AbstractSingleUnitTest {
   }
 
   Future<void> assertFormat(String expectedCode) async {
-    var analysisContext = contextFor(testFile);
+    var analysisContext = contextFor2(testFile);
     processor = BulkFixProcessor(
       TestInstrumentationService(),
       await workspace,
-      byteStore: byteStore,
+      byteStore: _byteStore,
     );
     await processor.formatCode([analysisContext]);
     var change = processor.builder.sourceChange;
@@ -181,11 +188,11 @@ abstract class BulkFixProcessorTest extends AbstractSingleUnitTest {
   }
 
   Future<void> assertOrganize(String expectedCode) async {
-    var analysisContext = contextFor(testFile);
+    var analysisContext = contextFor2(testFile);
     processor = BulkFixProcessor(
       TestInstrumentationService(),
       await workspace,
-      byteStore: byteStore,
+      byteStore: _byteStore,
     );
     await processor.organizeDirectives([analysisContext]);
     var change = processor.builder.sourceChange;
@@ -200,12 +207,12 @@ abstract class BulkFixProcessorTest extends AbstractSingleUnitTest {
     List<String>? codes,
     bool isParse = false,
   }) async {
-    var analysisContext = contextFor(testFile);
+    var analysisContext = contextFor2(testFile);
     var processor = BulkFixProcessor(
       TestInstrumentationService(),
       await workspace,
       codes: codes,
-      byteStore: byteStore,
+      byteStore: _byteStore,
     );
     if (isParse) {
       await processor.fixErrorsUsingParsedResult([analysisContext]);
@@ -218,17 +225,19 @@ abstract class BulkFixProcessorTest extends AbstractSingleUnitTest {
   /// Computes whether there are bulk fixes for the context containing
   /// [testFile].
   Future<bool> computeHasFixes() async {
-    var analysisContext = contextFor(testFile);
+    var analysisContext = contextFor2(testFile);
     processor = BulkFixProcessor(
       TestInstrumentationService(),
       await workspace,
-      byteStore: byteStore,
+      byteStore: _byteStore,
     );
     return processor.hasFixes([analysisContext]);
   }
 
   @override
   void setUp() {
+    registerLintRules();
+    registerBuiltInFixGenerators();
     super.setUp();
     verifyNoTestUnitErrors = false;
     _createAnalysisOptionsFile();
@@ -260,6 +269,11 @@ abstract class BulkFixProcessorTest extends AbstractSingleUnitTest {
 
 /// A base class defining support for writing fix-in-file processor tests.
 abstract class FixInFileProcessorTest extends BaseFixProcessorTest {
+  /// The lint codes being tested.
+  ///
+  /// The list can be empty if the fix isn't associatd with any lints.
+  List<String> get lintCodes => [];
+
   void assertProduces(Fix fix, String expected) {
     var fileEdits = fix.change.edits;
     expect(fileEdits, hasLength(1));
@@ -311,6 +325,15 @@ abstract class FixInFileProcessorTest extends BaseFixProcessorTest {
 
     var fixes = await _computeFixes(diagnostics.first);
     return fixes;
+  }
+
+  @override
+  void setUp() {
+    super.setUp();
+    var lintCodes = this.lintCodes;
+    if (lintCodes.isNotEmpty) {
+      createAnalysisOptionsFile(lints: lintCodes);
+    }
   }
 
   /// Computes fixes for the given [diagnostic] in [testUnit].

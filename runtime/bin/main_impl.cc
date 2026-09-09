@@ -32,9 +32,6 @@
 #include "bin/uri.h"
 #include "bin/utils.h"
 #include "bin/vmservice_impl.h"
-#if defined(DART_HOST_OS_WINDOWS)
-#include "bin/utils_win.h"
-#endif
 #include "include/bin/dart_io_api.h"
 #include "include/bin/native_assets_api.h"
 #include "include/dart_api.h"
@@ -170,15 +167,7 @@ static void WriteDepsFile() {
 static void DeleteTempDirOnShutdown() {
   if (Options::delete_temp_dir_on_shutdown() != nullptr) {
     const char* temp_dir = Options::delete_temp_dir_on_shutdown();
-    if (!dart::bin::Directory::Delete(nullptr, temp_dir,
-                                      /* recursive= */ true)) {
-#if defined(DART_HOST_OS_WINDOWS)
-      auto temp_dir_w = Utf8ToWideChar(temp_dir);
-      if (temp_dir_w != nullptr) {
-        DeleteTempDirDetached(temp_dir_w.get());
-      }
-#endif
-    }
+    dart::bin::Directory::Delete(nullptr, temp_dir, /* recursive= */ true);
   }
 }
 
@@ -1438,6 +1427,14 @@ void main(int argc, char** argv) {
 #endif
   }
 
+  // --delete_temp_dir_on_shutdown would otherwise point into argv, whose
+  // strings main() frees before returning. Own a copy instead, kept for the
+  // lifetime of the process.
+  if (Options::delete_temp_dir_on_shutdown() != nullptr) {
+    Options::set_delete_temp_dir_on_shutdown(
+        Utils::StrDup(Options::delete_temp_dir_on_shutdown()));
+  }
+
   // If we need to write an app-jit snapshot, a depfile, or delete a temp dir,
   // then add an exit hook.
   if ((Options::gen_snapshot_kind() == kAppJIT) ||
@@ -1567,6 +1564,8 @@ void main(int argc, char** argv) {
   free(app_script_uri);
   asset_resolution_base.reset();
 
+  DeleteTempDirOnShutdown();
+
   // Free copied argument strings if converted.
   if (argv_converted) {
     for (int i = 0; i < argc; i++) {
@@ -1577,7 +1576,6 @@ void main(int argc, char** argv) {
   // Free environment if any.
   Options::Cleanup();
 
-  DeleteTempDirOnShutdown();
   Platform::Exit(global_exit_code);
 }
 

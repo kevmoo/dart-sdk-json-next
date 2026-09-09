@@ -11,7 +11,6 @@ import 'package:native_compiler/back_end/constraints.dart';
 import 'package:native_compiler/back_end/locations.dart';
 import 'package:native_compiler/back_end/safepoint.dart';
 import 'package:native_compiler/back_end/stack_frame.dart';
-import 'package:native_compiler/runtime/type_utils.dart';
 
 /// Defines arm64 register allocation contraints for
 /// inputs/outputs/temporaries of the IR instructions.
@@ -205,24 +204,47 @@ final class Arm64Constraints extends Constraints {
       throw 'Unexpected StoreLocal';
 
   @override
-  InstructionConstraints? visitLoadInstanceField(LoadInstanceField instr) =>
-      const InstructionConstraints(anyCpuRegister, [anyCpuRegister]);
+  InstructionConstraints? visitLoadInstanceField(LoadInstanceField instr) {
+    if (instr.checkInitialized) {
+      final inputs = const [R1];
+      return InstructionConstraints(
+        returnReg,
+        inputs,
+        // TODO: save registers on slow path
+        allRegistersExcept(returnReg, inputs),
+        Safepoint(),
+      );
+    }
+    return const InstructionConstraints(anyCpuRegister, [anyCpuRegister]);
+  }
 
   @override
-  InstructionConstraints? visitStoreInstanceField(StoreInstanceField instr) =>
-      InstructionConstraints(
+  InstructionConstraints? visitStoreInstanceField(StoreInstanceField instr) {
+    if (instr.checkNotInitialized) {
+      final inputs = allocatableRegisters.take(instr.inputCount).toList();
+      return InstructionConstraints(
         null,
-        const [anyCpuRegister, anyCpuRegister],
-        const [anyCpuRegister, anyCpuRegister],
-        Safepoint(), // For write barrier slow path.
+        inputs,
+        // TODO: save registers on slow path
+        allRegistersExcept(null, inputs),
+        Safepoint(),
       );
+    }
+    return InstructionConstraints(
+      null,
+      const [anyCpuRegister, anyCpuRegister],
+      const [anyCpuRegister, anyCpuRegister],
+      Safepoint(), // For write barrier slow path.
+    );
+  }
 
   @override
   InstructionConstraints? visitLoadStaticField(LoadStaticField instr) =>
-      (instr.checkInitialized && hasNonTrivialInitializer(instr.field.astField))
+      instr.checkInitialized
       ? InstructionConstraints(
           returnReg,
           const [],
+          // TODO: save registers on slow path
           volatileRegistersExceptReturnReg,
           Safepoint(),
         )
@@ -232,12 +254,23 @@ final class Arm64Constraints extends Constraints {
         ]);
 
   @override
-  InstructionConstraints? visitStoreStaticField(StoreStaticField instr) =>
-      const InstructionConstraints(
+  InstructionConstraints? visitStoreStaticField(StoreStaticField instr) {
+    if (instr.checkNotInitialized) {
+      final inputs = allocatableRegisters.take(instr.inputCount).toList();
+      return InstructionConstraints(
         null,
-        [anyCpuRegister],
-        [anyCpuRegister, anyCpuRegister],
+        inputs,
+        // TODO: save registers on slow path
+        allRegistersExcept(null, inputs),
+        Safepoint(),
       );
+    }
+    return const InstructionConstraints(
+      null,
+      [anyCpuRegister],
+      [anyCpuRegister, anyCpuRegister],
+    );
+  }
 
   @override
   InstructionConstraints? visitLoadExternalField(LoadExternalField instr) =>
@@ -265,7 +298,11 @@ final class Arm64Constraints extends Constraints {
       return InstructionConstraints(
         null,
         [anyCpuRegister, anyRegisterOrImmediate(instr.index), anyCpuRegister],
-        [if (instr.kind == .uint8ClampedList) anyCpuRegister],
+        [
+          if (instr.kind == .uint8ClampedList ||
+              instr.kind == .uint8ClampedListView)
+            anyCpuRegister,
+        ],
       );
     }
   }
@@ -277,6 +314,18 @@ final class Arm64Constraints extends Constraints {
     anyCpuRegister,
     anyCpuRegister,
   ]);
+
+  @override
+  InstructionConstraints? visitCopyArrayElements(CopyArrayElements instr) {
+    final inputs = allocatableRegisters.take(instr.inputCount).toList();
+    return InstructionConstraints(
+      null,
+      inputs,
+      // TODO: save registers on slow path
+      allRegistersExcept(null, inputs),
+      Safepoint(),
+    );
+  }
 
   @override
   InstructionConstraints? visitThrow(Throw instr) {
@@ -371,17 +420,20 @@ final class Arm64Constraints extends Constraints {
     };
     if (callsSubtypeTestCacheStub) {
       final inputs = [
-        TypeTestingStub.instanceReg,
+        SubtypeTestCacheStub.instanceReg,
         if (instr.inputCount > 1) ...const [
-          TypeTestingStub.instantiatorTypeArgumentsReg,
-          TypeTestingStub.functionTypeArgumentsReg,
+          SubtypeTestCacheStub.instantiatorTypeArgumentsReg,
+          SubtypeTestCacheStub.functionTypeArgumentsReg,
         ],
       ];
       return InstructionConstraints(
-        TypeTestingStub.subtypeTestCacheResultReg,
+        SubtypeTestCacheStub.subtypeTestCacheResultReg,
         inputs,
         // TODO: save registers on slow path
-        allRegistersExcept(TypeTestingStub.subtypeTestCacheResultReg, inputs),
+        allRegistersExcept(
+          SubtypeTestCacheStub.subtypeTestCacheResultReg,
+          inputs,
+        ),
         Safepoint(),
       );
     }
@@ -518,10 +570,24 @@ final class Arm64Constraints extends Constraints {
 
   @override
   InstructionConstraints? visitBinaryIntOp(BinaryIntOp instr) =>
-      InstructionConstraints(anyCpuRegister, [
-        anyCpuRegister,
-        anyRegisterOrImmediate(instr.right),
-      ]);
+      switch (instr.op) {
+        .truncatingDiv || .rem => InstructionConstraints(
+          anyCpuRegister,
+          const [anyCpuRegister, anyCpuRegister],
+          const [],
+          instr.right.canBeZero ? Safepoint() : null,
+        ),
+        .mod => InstructionConstraints(
+          anyCpuRegister,
+          const [anyCpuRegister, anyCpuRegister],
+          const [anyCpuRegister],
+          instr.right.canBeZero ? Safepoint() : null,
+        ),
+        _ => InstructionConstraints(anyCpuRegister, [
+          anyCpuRegister,
+          anyRegisterOrImmediate(instr.right),
+        ]),
+      };
 
   @override
   InstructionConstraints? visitUnaryIntOp(UnaryIntOp instr) =>
