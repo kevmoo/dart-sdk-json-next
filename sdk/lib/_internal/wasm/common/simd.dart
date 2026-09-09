@@ -611,6 +611,9 @@ final class I32x4 extends WasmTypedDataBase implements Int32x4 {
   factory I32x4(int x, int y, int z, int w) =>
       I32x4.fromV128(WasmI32x4.fromInts(x, y, z, w).value);
 
+  factory I32x4.splat(int value) =>
+      I32x4.fromV128(WasmI32x4.splat(WasmI32.fromInt(value)));
+
   factory I32x4.bool(bool x, bool y, bool z, bool w) => I32x4.fromV128(
     WasmI32x4.fromInts(x ? -1 : 0, y ? -1 : 0, z ? -1 : 0, w ? -1 : 0).value,
   );
@@ -636,6 +639,7 @@ final class I32x4 extends WasmTypedDataBase implements Int32x4 {
       I32x4.fromV128(_bits & (other as I32x4)._bits);
   Int32x4 operator ^(Int32x4 other) =>
       I32x4.fromV128(_bits ^ (other as I32x4)._bits);
+  Int32x4 operator ~() => I32x4.fromV128(~_bits);
   Int32x4 operator +(Int32x4 other) => I32x4.fromV128(
     (WasmI32x4(_bits) + WasmI32x4((other as I32x4)._bits)).value,
   );
@@ -645,6 +649,52 @@ final class I32x4 extends WasmTypedDataBase implements Int32x4 {
   Int32x4 operator -() => I32x4.fromV128((-WasmI32x4(_bits)).value);
 
   int get signMask => WasmI32x4(_bits).bitmask.toIntUnsigned();
+
+  Int32x4 equal(Int32x4 other) =>
+      I32x4.fromV128(WasmI32x4(_bits).eq(WasmI32x4((other as I32x4)._bits)));
+
+  Int32x4 notEqual(Int32x4 other) =>
+      I32x4.fromV128(WasmI32x4(_bits).ne(WasmI32x4((other as I32x4)._bits)));
+
+  Int32x4 lessThan(Int32x4 other) {
+    return I32x4._truncated(
+      x < other.x ? -1 : 0,
+      y < other.y ? -1 : 0,
+      z < other.z ? -1 : 0,
+      w < other.w ? -1 : 0,
+    );
+  }
+
+  Int32x4 lessThanOrEqual(Int32x4 other) {
+    return I32x4._truncated(
+      x <= other.x ? -1 : 0,
+      y <= other.y ? -1 : 0,
+      z <= other.z ? -1 : 0,
+      w <= other.w ? -1 : 0,
+    );
+  }
+
+  Int32x4 greaterThan(Int32x4 other) {
+    return I32x4._truncated(
+      x > other.x ? -1 : 0,
+      y > other.y ? -1 : 0,
+      z > other.z ? -1 : 0,
+      w > other.w ? -1 : 0,
+    );
+  }
+
+  Int32x4 greaterThanOrEqual(Int32x4 other) {
+    return I32x4._truncated(
+      x >= other.x ? -1 : 0,
+      y >= other.y ? -1 : 0,
+      z >= other.z ? -1 : 0,
+      w >= other.w ? -1 : 0,
+    );
+  }
+
+  bool get anyTrue => _bits.anyTrue;
+
+  bool get allTrue => flagX && flagY && flagZ && flagW;
 
   Int32x4 shuffle(int mask) {
     // mask < 0 || mask > 255

@@ -915,8 +915,50 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
   }
 
   @override
+  Constant visitDotShorthandConstructorInvocation2(
+    covariant DotShorthandConstructorInvocation2Impl node,
+  ) {
+    if (!node.isConst) {
+      return InvalidConstant.genericError(node: node);
+    }
+    var constructor = node.element;
+    if (constructor != null) {
+      return _evaluationEngine.evaluateAndFormatErrorsInConstructorCall(
+        _library,
+        node,
+        constructor.returnType.typeArguments,
+        node.argumentList.arguments2,
+        constructor,
+        this,
+      );
+    }
+    return InvalidConstant.forEntity(
+      entity: node,
+      locatableDiagnostic: diag.invalidConstant,
+    );
+  }
+
+  @override
   Constant visitDotShorthandInvocation(DotShorthandInvocation node) {
     return _invalidConstantForMethodInvocation(node);
+  }
+
+  @override
+  Constant visitDotShorthandMethodInvocation(
+    DotShorthandMethodInvocation node,
+  ) => _visitNamedFunctionInvocation(node);
+
+  @override
+  Constant visitDotShorthandNameExpression(
+    covariant DotShorthandNameExpressionImpl node,
+  ) {
+    var element = node.resolution.elementOrRecovery;
+    return _getConstantValue(
+      errorNode: node,
+      expression: node,
+      identifier: node.dotShorthandPropertyAccess.propertyName,
+      element: element,
+    );
   }
 
   @override
@@ -941,72 +983,25 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
   }
 
   @override
+  Constant visitFunctionInstantiation(
+    covariant FunctionInstantiationImpl node,
+  ) {
+    return _evaluateFunctionInstantiation(node.operand, node.typeArguments);
+  }
+
+  @override
   Constant visitFunctionReference(covariant FunctionReferenceImpl node) {
+    if (node.typeArguments case var typeArguments?) {
+      return _evaluateFunctionInstantiation(node.function2, typeArguments);
+    }
     var functionResult = evaluateConstant(node.function2);
     if (functionResult is! DartObjectImpl) {
       return functionResult;
     }
-
-    // Report an error if any of the _inferred_ type argument types refer to a
-    // type parameter. If, however, `node.typeArguments` is not `null`, then
-    // any type parameters contained therein are reported as non-constant in
-    // [ConstantVerifier].
-    if (node.typeArguments == null) {
-      var typeArgumentTypes = node.typeArgumentTypes;
-      if (typeArgumentTypes != null) {
-        var instantiatedTypeArgumentTypes = typeArgumentTypes.map((type) {
-          if (type is TypeParameterType) {
-            return _lexicalTypeEnvironment?[type.element] ?? type;
-          } else {
-            return type;
-          }
-        });
-        if (instantiatedTypeArgumentTypes.any(hasTypeParameterReference)) {
-          return InvalidConstant.forEntity(
-            entity: node,
-            locatableDiagnostic: diag.constWithTypeParametersFunctionTearoff,
-          );
-        }
-      }
-    }
-
-    var typeArgumentList = node.typeArguments;
-    if (typeArgumentList == null) {
-      return _instantiateFunctionType(node, functionResult);
-    }
-
-    var typeArguments = <TypeImpl>[];
-    for (var typeArgument in typeArgumentList.arguments) {
-      var typeArgumentConstant = evaluateConstant(typeArgument);
-      switch (typeArgumentConstant) {
-        case InvalidConstant(locatableDiagnostic: diag.constTypeParameter):
-          // If there's a type parameter error in the evaluated constant, we
-          // convert the message to a more specific function reference error.
-          return InvalidConstant.forEntity(
-            entity: typeArgument,
-            locatableDiagnostic: diag.constWithTypeParametersFunctionTearoff,
-          );
-        case InvalidConstant():
-          return typeArgumentConstant;
-        case DartObjectImpl():
-          var typeArgumentType = typeArgumentConstant.toTypeValue();
-          if (typeArgumentType == null) {
-            return InvalidConstant.forEntity(
-              entity: typeArgument,
-              locatableDiagnostic: diag.invalidConstant,
-            );
-          }
-          // TODO(srawlins): Test type alias types (`typedef i = int`) used as
-          // type arguments. Possibly change implementation based on
-          // canonicalization rules.
-          typeArguments.add(typeArgumentType);
-      }
-    }
-    return _dartObjectComputer.typeInstantiate(
+    return _instantiateFunctionType(
+      node,
+      node.typeArgumentTypes,
       functionResult,
-      typeArguments,
-      node.function2,
-      typeArgumentList,
     );
   }
 
@@ -1036,6 +1031,45 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
       leftResult,
       () => evaluateConstant(node.rightOperand),
     );
+  }
+
+  @override
+  Constant visitImplicitFunctionInstantiation(
+    covariant ImplicitFunctionInstantiationImpl node,
+  ) {
+    var value = evaluateConstant(node.operand);
+    if (value is! DartObjectImpl) {
+      return value;
+    }
+    return _instantiateFunctionType(node, node.typeArgumentTypes, value);
+  }
+
+  @override
+  Constant visitImportPrefixedFunctionInvocation(
+    ImportPrefixedFunctionInvocation node,
+  ) => _visitNamedFunctionInvocation(node);
+
+  @override
+  Constant visitImportPrefixedNameExpression(
+    covariant ImportPrefixedNameExpressionImpl node,
+  ) {
+    var identifier = node.prefixedIdentifier.identifier;
+    if (node.prefixedIdentifier.isDeferred) {
+      return _getDeferredLibraryError(node, identifier);
+    }
+    return _getConstantValue(
+      errorNode: node,
+      expression: node,
+      identifier: identifier,
+      element: node.resolution.elementOrRecovery,
+    );
+  }
+
+  @override
+  Constant visitIncrementOrDecrementExpression(
+    IncrementOrDecrementExpression node,
+  ) {
+    return InvalidConstant.genericError(node: node);
   }
 
   @override
@@ -1201,21 +1235,6 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
       evaluateConstant(node.expression2);
 
   @override
-  Constant visitPostfixDecrement(PostfixDecrement node) {
-    return InvalidConstant.genericError(node: node);
-  }
-
-  @override
-  Constant visitPostfixIncrement(PostfixIncrement node) {
-    return InvalidConstant.genericError(node: node);
-  }
-
-  @override
-  Constant visitPrefixDecrement(PrefixDecrement node) {
-    return InvalidConstant.genericError(node: node);
-  }
-
-  @override
   Constant visitPrefixedIdentifier(covariant PrefixedIdentifierImpl node) {
     var prefixNode = node.prefix;
     var prefixElement = prefixNode.element;
@@ -1253,11 +1272,6 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
       identifier: node.identifier,
       element: node.identifier.element,
     );
-  }
-
-  @override
-  Constant visitPrefixIncrement(PrefixIncrement node) {
-    return InvalidConstant.genericError(node: node);
   }
 
   @override
@@ -1305,7 +1319,13 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
   }
 
   @override
-  Constant visitPropertyExtraction(covariant PropertyExtractionImpl node) {
+  Constant visitReceiverMethodInvocation(ReceiverMethodInvocation node) =>
+      _visitNamedFunctionInvocation(node);
+
+  @override
+  Constant visitReceiverPropertyExtraction(
+    covariant ReceiverPropertyExtractionImpl node,
+  ) {
     var targetResult = evaluateConstant(node.receiver);
     if (targetResult is! DartObjectImpl) {
       return targetResult;
@@ -1318,7 +1338,7 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
     return _evaluatePropertyAccess(
           targetResult,
           node,
-          propertyName: node.propertyName.lexeme,
+          propertyName: node.name.lexeme,
           propertyElement: propertyElement,
           isNullAware: false,
         ) ??
@@ -1508,6 +1528,31 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
         operand,
       ),
     };
+  }
+
+  @override
+  Constant visitUnqualifiedFunctionInvocation(
+    UnqualifiedFunctionInvocation node,
+  ) => _visitNamedFunctionInvocation(node);
+
+  @override
+  Constant visitUnqualifiedNameExpression(
+    covariant UnqualifiedNameExpressionImpl node,
+  ) {
+    var identifier = node.simpleIdentifier;
+    var element = node.resolution.elementOrRecovery;
+    if (element case FormalParameterElement element) {
+      var value = _lexicalEnvironment?[element.baseElement];
+      if (value != null) {
+        return _instantiateFunctionTypeForSimpleIdentifier(identifier, value);
+      }
+    }
+    return _getConstantValue(
+      errorNode: node,
+      expression: node,
+      identifier: identifier,
+      element: element,
+    );
   }
 
   /// Builds a list constant by adding the evaluated entries of [elements] to
@@ -1906,6 +1951,49 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
     return result;
   }
 
+  Constant _evaluateFunctionInstantiation(
+    ExpressionImpl operand,
+    TypeArgumentListImpl typeArgumentList,
+  ) {
+    var functionResult = evaluateConstant(operand);
+    if (functionResult is! DartObjectImpl) {
+      return functionResult;
+    }
+    var typeArguments = <TypeImpl>[];
+    for (var typeArgument in typeArgumentList.arguments) {
+      var typeArgumentConstant = evaluateConstant(typeArgument);
+      switch (typeArgumentConstant) {
+        case InvalidConstant(locatableDiagnostic: diag.constTypeParameter):
+          // A type parameter in an instantiation has a more specific error
+          // than the ordinary constant type-argument diagnostic.
+          return InvalidConstant.forEntity(
+            entity: typeArgument,
+            locatableDiagnostic: diag.constWithTypeParametersFunctionTearoff,
+          );
+        case InvalidConstant():
+          return typeArgumentConstant;
+        case DartObjectImpl():
+          var typeArgumentType = typeArgumentConstant.toTypeValue();
+          if (typeArgumentType == null) {
+            return InvalidConstant.forEntity(
+              entity: typeArgument,
+              locatableDiagnostic: diag.invalidConstant,
+            );
+          }
+          // TODO(srawlins): Test type alias types (`typedef i = int`) used as
+          // type arguments. Possibly change implementation based on
+          // canonicalization rules.
+          typeArguments.add(typeArgumentType);
+      }
+    }
+    return _dartObjectComputer.typeInstantiate(
+      functionResult,
+      typeArguments,
+      operand,
+      typeArgumentList,
+    );
+  }
+
   DartObjectImpl _evaluateIntegerLiteral(
     IntegerLiteral node, {
     required bool negated,
@@ -2002,11 +2090,11 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
 
     // TODO(srawlins): Remove this check when [FunctionReference]s are inserted
     // for generic function instantiation for pre-constructor-tear-offs code.
-    if (expression is SimpleIdentifier &&
-        (expression.tearOffTypeArgumentTypes?.any(hasTypeParameterReference) ??
+    if (identifier != null &&
+        (identifier.tearOffTypeArgumentTypes?.any(hasTypeParameterReference) ??
             false)) {
       return InvalidConstant.forEntity(
-        entity: expression,
+        entity: expression ?? errorNode,
         locatableDiagnostic: diag.constTypeParameter,
       );
     }
@@ -2206,24 +2294,36 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
     );
   }
 
-  /// If the type of [value] is a generic [FunctionType], and [node] has type
-  /// argument types, returns [value] type-instantiated with those [node]'s
-  /// type argument types, otherwise returns [value].
-  DartObjectImpl _instantiateFunctionType(
-    FunctionReferenceImpl node,
+  /// Instantiates the generic function [value] with [typeArgumentTypes].
+  Constant _instantiateFunctionType(
+    ExpressionImpl node,
+    List<TypeImpl>? typeArgumentTypes,
     DartObjectImpl value,
   ) {
+    // Written type arguments are checked at their syntax. Inferred arguments
+    // have no syntax, so report non-constant types on the instantiation.
+    if (typeArgumentTypes != null) {
+      var instantiatedTypeArgumentTypes = typeArgumentTypes.map((type) {
+        if (type is TypeParameterType) {
+          return _lexicalTypeEnvironment?[type.element] ?? type;
+        }
+        return type;
+      });
+      if (instantiatedTypeArgumentTypes.any(hasTypeParameterReference)) {
+        return InvalidConstant.forEntity(
+          entity: node,
+          locatableDiagnostic: diag.constWithTypeParametersFunctionTearoff,
+        );
+      }
+    }
     var functionElement = value.toFunctionValue();
     if (functionElement is! InternalExecutableElement) {
       return value;
     }
-    var valueType = functionElement.type;
-    if (valueType.typeParameters.isNotEmpty) {
-      var typeArgumentTypes = node.typeArgumentTypes;
+    var valueType = value.type;
+    if (valueType is FunctionTypeImpl && valueType.typeParameters.isNotEmpty) {
       if (typeArgumentTypes != null && typeArgumentTypes.isNotEmpty) {
-        var instantiatedType = functionElement.type.instantiate(
-          typeArgumentTypes,
-        );
+        var instantiatedType = valueType.instantiate(typeArgumentTypes);
         var substitution = _substitution;
         if (substitution != null) {
           instantiatedType = substitution.mapFunctionType(instantiatedType);
@@ -2367,6 +2467,26 @@ class ConstantVisitor extends UnifyingAstVisitor2<Constant> {
     } else {
       return _dartObjectComputer.lazyOr(node, leftResult, computeRightOperand);
     }
+  }
+
+  Constant _visitNamedFunctionInvocation(NamedFunctionInvocation node) {
+    var element = switch (node.resolution) {
+      ExecutableInvocationResolution(:var element) => element,
+      _ => null,
+    };
+    if (element is TopLevelFunctionElementImpl && element.isDartCoreIdentical) {
+      var arguments = node.argumentList.arguments2;
+      var leftArgument = evaluateConstant(arguments[0]);
+      if (leftArgument is! DartObjectImpl) {
+        return leftArgument;
+      }
+      var rightArgument = evaluateConstant(arguments[1]);
+      if (rightArgument is! DartObjectImpl) {
+        return rightArgument;
+      }
+      return _dartObjectComputer.isIdentical(node, leftArgument, rightArgument);
+    }
+    return _invalidConstantForMethodInvocation(node);
   }
 }
 
@@ -2820,6 +2940,14 @@ class DartObjectComputer {
         if (node is SimpleIdentifier) {
           if (node.element case ExecutableElement e) {
             target = InvocationTargetExecutableElement(e);
+          }
+        } else if (node is UnqualifiedNameExpression) {
+          if (node.resolution case NamedReadResolutionWithElement(
+            :var element,
+          )) {
+            if (element is ExecutableElement) {
+              target = InvocationTargetExecutableElement(element);
+            }
           }
         }
         target ??= InvocationTargetFunctionTypedExpression(rawType);
@@ -3625,6 +3753,8 @@ class _ConstructorInvocationEvaluator {
       if (node is ConstructorInvocation) {
         keyword = node.keyword;
       } else if (node is DotShorthandConstructorInvocation) {
+        keyword = node.constKeyword;
+      } else if (node is DotShorthandConstructorInvocation2) {
         keyword = node.constKeyword;
       }
       return InvalidConstant.forEntity(

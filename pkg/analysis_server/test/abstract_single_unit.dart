@@ -4,7 +4,6 @@
 
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
-import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/src/diagnostic/diagnostic.dart' as diag;
@@ -12,9 +11,8 @@ import 'package:analyzer/src/test_utilities/find_element.dart';
 import 'package:analyzer/src/test_utilities/find_node.dart';
 import 'package:analyzer/src/test_utilities/test_code_format.dart';
 import 'package:analyzer/src/utilities/extensions/analysis_session.dart';
+import 'package:analyzer_testing/src/abstract_context.dart';
 import 'package:test/test.dart';
-
-import 'abstract_context.dart';
 
 class AbstractSingleUnitTest extends AbstractContextTest {
   bool verifyNoTestUnitErrors = true;
@@ -26,7 +24,6 @@ class AbstractSingleUnitTest extends AbstractContextTest {
   late CompilationUnit testUnit;
   late FindNode findNode;
   late FindElement findElement;
-  late LibraryElement testLibraryElement;
 
   TestCode get parsedTestCode => _parsedTestCode!;
   set parsedTestCode(TestCode value) {
@@ -48,16 +45,11 @@ class AbstractSingleUnitTest extends AbstractContextTest {
     newFile(testFile.path, testCode);
   }
 
-  int findOffset(String search) {
-    var offset = testCode.indexOf(search);
-    expect(offset, isNonNegative, reason: "Not found '$search' in\n$testCode");
-    return offset;
-  }
-
   Future<ParsedUnitResult> getParsedUnit(File file) async {
     var path = file.path;
-    var session = await sessionFor(fileForContextSelection ?? file);
-    var result = session.getParsedUnit(path);
+    var analysisContext = contextFor2(file);
+    await analysisContext.applyPendingFileChanges();
+    var result = analysisContext.currentSession.getParsedUnit(path);
     return result as ParsedUnitResult;
   }
 
@@ -75,7 +67,6 @@ class AbstractSingleUnitTest extends AbstractContextTest {
       testLibraryResult = libraryResult;
       testAnalysisResult = unitResult;
       testUnit = unitResult.unit;
-      testLibraryElement = testUnit.declaredFragment!.element;
       findNode = FindNode(unitResult.content, testUnit);
       findElement = FindElement(testUnit);
     }
@@ -111,10 +102,6 @@ class AbstractSingleUnitTest extends AbstractContextTest {
     testUnit = testParsedResult.unit;
     findNode = FindNode(testCode, testUnit);
     findElement = FindElement(testUnit);
-  }
-
-  void putTestFileInTestDir() {
-    testFilePath = '$testPackageTestPath/test.dart';
   }
 
   Future<void> resolveTestCode(

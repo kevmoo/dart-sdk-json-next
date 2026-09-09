@@ -1079,6 +1079,40 @@ String m3() {
     );
   }
 
+  Future<void> test_functionType_parameterName() async {
+    content = '''
+void f(void Function(int i) x) {
+  x^
+}
+''';
+
+    await expectLabel(
+      content,
+      label: 'x',
+      labelDetail: ' void Function(int i)',
+      labelDescription: null,
+      filterText: null,
+      detail: 'void Function(int i)',
+    );
+  }
+
+  Future<void> test_functionType_parameterName_returnType() async {
+    content = '''
+void f(void Function(int i) Function() x) {
+  x^
+}
+''';
+
+    await expectLabel(
+      content,
+      label: 'x',
+      labelDetail: ' void Function(int i) Function()',
+      labelDescription: null,
+      filterText: null,
+      detail: 'void Function(int i) Function()',
+    );
+  }
+
   Future<void> test_imported_function_returnType_args() async {
     newFile(fileAPath, '''
 String a(String a, {String b}) {}
@@ -1540,6 +1574,9 @@ void f(int variable) {
 
 @reflectiveTest
 class CompletionTest extends AbstractCompletionTest {
+  @override
+  bool get addFlutterPackageDep => true;
+
   /// Checks whether the correct types of documentation are returned for
   /// completions based on [preference].
   Future<void> assertDocumentation(
@@ -1692,12 +1729,6 @@ void f() {
     expect(item.textEditText ?? item.label, text);
     expect(item.insertText, isNull);
     expect(item.textEdit, isNull);
-  }
-
-  @override
-  void setUp() {
-    super.setUp();
-    writeTestPackageConfig(flutter: true);
   }
 
   Future<void> test_alreadyImported_noImportUris() async {
@@ -5695,18 +5726,15 @@ void f() {
 
 @reflectiveTest
 class FlutterSnippetCompletionTest extends SnippetCompletionTest {
+  @override
+  bool get addFlutterPackageDep => true;
+
   /// Standard import statements expected for basic Widgets.
   String get expectedImports => '''
 import 'package:flutter/widgets.dart';''';
 
   /// Constructor params expected on Widget classes.
   String get expectedWidgetConstructorParams => '({super.key})';
-
-  @override
-  void setUp() {
-    super.setUp();
-    writeTestPackageConfig(flutter: true);
-  }
 
   Future<void> test_snippets_flutterStateful() async {
     content = '''
@@ -5977,7 +6005,7 @@ abstract class SnippetCompletionTest extends AbstractLspAnalysisServerTest
     required String prefix,
     required String label,
   }) async {
-    var (snippet: snippet, defaults: defaults) = await expectSnippet(
+    var (:snippet, :defaults) = await expectSnippet(
       code,
       prefix: prefix,
       label: label,

@@ -6,6 +6,7 @@
 library;
 
 import 'package:_fe_analyzer_shared/src/flow_analysis/flow_analysis.dart';
+import 'package:_fe_analyzer_shared/src/flow_analysis/flow_analysis_log.dart';
 import 'package:_fe_analyzer_shared/src/flow_analysis/flow_analysis_operations.dart';
 import 'package:_fe_analyzer_shared/src/type_inference/assigned_variables.dart';
 import 'package:_fe_analyzer_shared/src/type_inference/type_analyzer.dart';
@@ -147,6 +148,7 @@ class FlowAnalysisHelper {
       getExpressionInfo(expression),
       subExpressionType: SharedTypeView(expression.typeOrThrow),
       castType: SharedTypeView(typeAnnotation.typeOrThrow),
+      offset: node.asOperator.offset,
     );
   }
 
@@ -167,6 +169,7 @@ class FlowAnalysisHelper {
     AstNodeImpl node,
     List<FormalParameterElementImpl>? parameters, {
     void Function(AstVisitor2<Object?> visitor)? visit,
+    required int offset,
   }) {
     inferenceLogWriter?.enterBodyOrInitializer(node);
     assert(flow == null);
@@ -186,21 +189,26 @@ class FlowAnalysisHelper {
     }
     flow =
         FlowAnalysis<
-          AstNodeImpl,
-          StatementImpl,
-          ExpressionImpl,
-          PromotableElementImpl
-        >(
-          typeOperations,
-          assignedVariables!,
-          typeAnalyzerOptions: typeAnalyzerOptions,
-          enableLog: enableLog,
-        );
+            AstNodeImpl,
+            StatementImpl,
+            ExpressionImpl,
+            PromotableElementImpl
+          >(
+            typeOperations,
+            assignedVariables!,
+            typeAnalyzerOptions: typeAnalyzerOptions,
+            enableLog: enableLog,
+          )
+          ..checkOffset(offset);
   }
 
   /// This method is called whenever the [ResolverVisitor] leaves the body or
   /// initializer of a top level declaration.
-  void bodyOrInitializer_exit() {
+  ///
+  /// Returns the [FlowAnalysisLog] that was collected by flow analysis during
+  /// resolution of the declaration, or `null` if flow analysis logging is not
+  /// currently enabled.
+  FlowAnalysisLog? bodyOrInitializer_exit() {
     inferenceLogWriter?.exitBodyOrInitializer();
     // Set this.flow to null before doing any clean-up so that if an exception
     // is raised, the state is already updated correctly, and we don't have
@@ -210,11 +218,12 @@ class FlowAnalysisHelper {
     assignedVariables = null;
 
     flow!.finish();
+    return flow.getLog();
   }
 
   void breakStatement(BreakStatement node) {
     var target = getLabelTarget(node, node.label?.element, isBreak: true);
-    flow!.handleBreak(target);
+    flow!.handleBreak(target, offset: node.semicolon.offset);
   }
 
   /// Mark the [node] as unreachable if it is not covered by another node that
@@ -230,17 +239,19 @@ class FlowAnalysisHelper {
 
   void continueStatement(ContinueStatement node) {
     var target = getLabelTarget(node, node.label?.element, isBreak: false);
-    flow!.handleContinue(target);
+    flow!.handleContinue(target, offset: node.semicolon.offset);
   }
 
   void declarePrimaryConstructorParameters(
-    List<FormalParameterElementImpl> primaryConstructorParameters,
-  ) {
+    List<FormalParameterElementImpl> primaryConstructorParameters, {
+    required int offset,
+  }) {
     for (var parameter in primaryConstructorParameters) {
       flow!.declare(
         parameter,
         SharedTypeView(parameter.type),
         initialized: true,
+        offset: offset,
       );
     }
   }
@@ -249,9 +260,10 @@ class FlowAnalysisHelper {
     AstNodeImpl node,
     List<FormalParameterElementImpl>? parameters, {
     required bool isClosure,
+    required int offset,
   }) {
     if (isClosure) {
-      flow!.functionExpression_begin(node);
+      flow!.functionExpression_begin(node, offset: offset);
     }
 
     if (parameters != null) {
@@ -260,32 +272,42 @@ class FlowAnalysisHelper {
           parameter,
           SharedTypeView(parameter.type),
           initialized: true,
+          offset: offset,
         );
       }
     }
   }
 
-  void executableDeclaration_exit(FunctionBody body, bool isClosure) {
+  void executableDeclaration_exit(
+    FunctionBody body,
+    bool isClosure, {
+    required int offset,
+  }) {
     if (isClosure) {
-      flow!.functionExpression_end();
+      flow!.functionExpression_end(offset: offset);
     }
     if (!flow!.isReachable) {
       dataForTesting?.functionBodiesThatDontComplete.add(body);
     }
   }
 
-  void for_bodyBegin(AstNode node, ExpressionImpl? condition) {
+  void for_bodyBegin(
+    AstNode node,
+    ExpressionImpl? condition, {
+    required int offset,
+  }) {
     flow?.for_bodyBegin(
       node is StatementImpl ? node : null,
       switch (condition) {
         null => flow?.booleanLiteral(true),
         var condition => getExpressionInfo(condition),
       },
+      offset: offset,
     );
   }
 
-  void for_conditionBegin(AstNodeImpl node) {
-    flow?.for_conditionBegin(node);
+  void for_conditionBegin(AstNodeImpl node, {required int offset}) {
+    flow?.for_conditionBegin(node, offset: offset);
   }
 
   /// Gets the [ExpressionInfo] associated with the [expression].
@@ -339,13 +361,13 @@ class FlowAnalysisHelper {
   void labeledStatement_enter(LabeledStatementImpl node) {
     if (flow == null) return;
 
-    flow!.labeledStatement_begin(node);
+    flow!.labeledStatement_begin(node, offset: node.offset);
   }
 
   void labeledStatement_exit(LabeledStatement node) {
     if (flow == null) return;
 
-    flow!.labeledStatement_end();
+    flow!.labeledStatement_end(offset: node.end);
   }
 
   /// Associates [expression] with the given [expressionInfo] object, for later
@@ -355,6 +377,16 @@ class FlowAnalysisHelper {
     ExpressionInfo? expressionInfo,
   ) {
     _expressionInfoMap[expression] = expressionInfo;
+  }
+
+  /// Moves flow information when resolution replaces an expression node.
+  void transferExpressionInfo(
+    Expression oldExpression,
+    Expression newExpression,
+  ) {
+    if (_expressionInfoMap.containsKey(oldExpression)) {
+      _expressionInfoMap[newExpression] = _expressionInfoMap[oldExpression];
+    }
   }
 
   /// Transfers any test data that was recorded for [oldNode] so that it is now
@@ -382,6 +414,7 @@ class FlowAnalysisHelper {
           declaredElement,
           SharedTypeView(declaredElement.type),
           initialized: variable.initializer2 != null,
+          offset: node.offset,
         );
       }
     }
@@ -396,12 +429,14 @@ class FlowAnalysisHelper {
     required AstNodeImpl node,
     required List<FormalParameterElementImpl>? formalParameters,
     required T Function() operation,
+    required int offset,
   }) {
     if (isActive) {
       return operation();
     }
 
-    bodyOrInitializer_enter(node, formalParameters);
+    bodyOrInitializer_enter(node, formalParameters, offset: offset);
+    flow!.checkOffset(offset);
     var result = operation();
     bodyOrInitializer_exit();
     return result;
@@ -1202,6 +1237,15 @@ class _AssignedVariablesVisitor extends RecursiveAstVisitor2<void> {
   }
 
   @override
+  void visitIncrementOrDecrementExpression(
+    IncrementOrDecrementExpression node,
+  ) {
+    _readAssignmentTarget(node.target);
+    node.visitChildren2(this);
+    _writeAssignmentTarget(node.target);
+  }
+
+  @override
   void visitLogicalAnd(LogicalAnd node) {
     node.leftOperand.accept2(this);
     assignedVariables.beginNode();
@@ -1222,26 +1266,6 @@ class _AssignedVariablesVisitor extends RecursiveAstVisitor2<void> {
       assignedVariables.declare(variable);
     }
     super.visitPatternVariableDeclaration(node);
-  }
-
-  @override
-  void visitPostfixDecrement(PostfixDecrement node) {
-    _visitIncrementOrDecrementExpression(node);
-  }
-
-  @override
-  void visitPostfixIncrement(PostfixIncrement node) {
-    _visitIncrementOrDecrementExpression(node);
-  }
-
-  @override
-  void visitPrefixDecrement(PrefixDecrement node) {
-    _visitIncrementOrDecrementExpression(node);
-  }
-
-  @override
-  void visitPrefixIncrement(PrefixIncrement node) {
-    _visitIncrementOrDecrementExpression(node);
   }
 
   @override
@@ -1311,6 +1335,15 @@ class _AssignedVariablesVisitor extends RecursiveAstVisitor2<void> {
     assignedVariables.endNode(node);
 
     finallyBlock?.accept2(this);
+  }
+
+  @override
+  void visitUnqualifiedNameExpression(
+    covariant UnqualifiedNameExpressionImpl node,
+  ) {
+    if (node.scopeLookupResult?.getter case PromotableElementImpl element) {
+      assignedVariables.read(element);
+    }
   }
 
   @override
@@ -1428,14 +1461,6 @@ class _AssignedVariablesVisitor extends RecursiveAstVisitor2<void> {
     }
   }
 
-  void _visitIncrementOrDecrementExpression(
-    IncrementOrDecrementExpression node,
-  ) {
-    _readAssignmentTarget(node.target);
-    node.visitChildren2(this);
-    _writeAssignmentTarget(node.target);
-  }
-
   void _writeAssignmentTarget(AssignmentTarget target) {
     if (target is UnqualifiedNameAssignmentTargetImpl) {
       // Assigned-variable collection runs before expression resolution fills
@@ -1463,7 +1488,10 @@ class _LocalVariableTypeProvider implements LocalVariableTypeProvider {
       SharedTypeView? promotedType;
       if (isRead) {
         ExpressionInfo expressionInfo;
-        (promotedType, expressionInfo) = flow.variableRead(variable);
+        (promotedType, expressionInfo) = flow.variableRead(
+          variable,
+          offset: node.offset,
+        );
         _manager.storeExpressionInfo(node, expressionInfo);
       } else {
         promotedType = flow.promotedType(variable);

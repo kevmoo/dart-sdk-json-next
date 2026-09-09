@@ -228,8 +228,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   late final BinaryExpressionResolver _binaryExpressionResolver;
   late final ConstructorTearOffResolver _constructorTearOffResolver =
       ConstructorTearOffResolver(this);
-  late final FunctionExpressionInvocationResolver
-  functionExpressionInvocationResolver;
+  late final CallInvocationResolver callInvocationResolver;
   late final FunctionExpressionResolver _functionExpressionResolver;
   late final ForResolver _forResolver;
   late final IncrementOrDecrementResolver _incrementOrDecrementResolver;
@@ -376,9 +375,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
           : null,
     );
     _binaryExpressionResolver = BinaryExpressionResolver(resolver: this);
-    functionExpressionInvocationResolver = FunctionExpressionInvocationResolver(
-      resolver: this,
-    );
+    callInvocationResolver = CallInvocationResolver(resolver: this);
     _functionExpressionResolver = FunctionExpressionResolver(resolver: this);
     _forResolver = ForResolver(resolver: this);
     _incrementOrDecrementResolver = IncrementOrDecrementResolver(
@@ -731,7 +728,9 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     covariant CollectionElementImpl element,
     covariant CollectionLiteralContext? context,
   ) {
+    flowAnalysis.flow?.checkOffset(element.offset);
     element.resolveElement(this, context);
+    flowAnalysis.flow?.checkOffset(element.end);
     popRewrite();
   }
 
@@ -747,6 +746,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     // https://github.com/dart-lang/sdk/issues/62942.
     // TODO(paulberry): address this.
 
+    flowAnalysis.flow?.checkOffset(expression.offset);
     int? stackDepth;
     assert(() {
       stackDepth = rewriteStackDepth;
@@ -759,9 +759,16 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     inferenceLogWriter?.assertExpressionWasRecorded(expression);
     assert(rewriteStackDepth == stackDepth! + 1);
     var replacementExpression = peekRewrite()!;
-    assert(
-      identical(_replacements[expression] ?? expression, replacementExpression),
-    );
+    assert(() {
+      // A single dispatch can compose multiple expression rewrites.
+      AstNode expectedReplacement = expression;
+      while (true) {
+        var replacement = _replacements[expectedReplacement];
+        if (replacement == null) break;
+        expectedReplacement = replacement;
+      }
+      return identical(expectedReplacement, replacementExpression);
+    }());
     var staticType = replacementExpression.staticType;
     if (staticType == null) {
       var shouldHaveType = true;
@@ -800,6 +807,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       );
       return true;
     }());
+    flowAnalysis.flow?.checkOffset(expression.end);
     return ExpressionTypeAnalysisResult(
       type: SharedTypeView(staticType),
       flowAnalysisInfo: flowAnalysisInfo,
@@ -808,6 +816,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
   @override
   PatternResult dispatchPattern(SharedMatchContext context, AstNodeImpl node) {
+    flowAnalysis.flow?.checkOffset(node.offset);
     shared.PatternResult analysisResult;
     if (node is DartPatternImpl) {
       analysisResult = node.resolvePattern(this, context);
@@ -826,6 +835,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       popRewrite();
       // Stack: ()
     }
+    flowAnalysis.flow?.checkOffset(node.end);
     return analysisResult;
   }
 
@@ -836,7 +846,9 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
   @override
   void dispatchStatement(Statement statement) {
+    flowAnalysis.flow?.checkOffset(statement.offset);
     statement.accept2(this);
+    flowAnalysis.flow?.checkOffset(statement.end);
   }
 
   @override
@@ -887,16 +899,10 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   @override
-  int expressionEndOffset(ExpressionImpl expression) {
-    // TODO(paulberry): implement.
-    return 0;
-  }
+  int expressionEndOffset(ExpressionImpl expression) => expression.end;
 
   @override
-  int expressionStartOffset(ExpressionImpl expression) {
-    // TODO(paulberry): implement.
-    return 0;
-  }
+  int expressionStartOffset(ExpressionImpl expression) => expression.offset;
 
   @override
   void finishExpressionCase(
@@ -996,8 +1002,13 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         pattern: guardedPattern.pattern,
         guard: guardedPattern.whenClause?.expression2,
         variables: guardedPattern.variables,
+        beginAlternativeOffset: guardedPattern.offset,
+        finishJoinedPatternVariablesOffset: guardedPattern.pattern.end,
+        endAlternativeOffset: guardedPattern.end,
       ),
       expression: case_.expression2,
+      beginAlternativeOffset: guardedPattern.offset,
+      endAlternativeOffset: guardedPattern.end,
     );
   }
 
@@ -1012,16 +1023,32 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     CaseHeadOrDefaultInfo<AstNodeImpl, ExpressionImpl, PromotableElementImpl>
     ofMember(SwitchMemberImpl member) {
       switch (member) {
-        case SwitchCaseImpl(:var expression2):
-          return CaseHeadInfo(pattern: expression2, variables: {});
-        case SwitchPatternCaseImpl(:var guardedPattern):
+        case SwitchCaseImpl(:var expression2, :var keyword, :var colon):
+          return CaseHeadInfo(
+            pattern: expression2,
+            variables: {},
+            beginAlternativeOffset: keyword.offset,
+            finishJoinedPatternVariablesOffset: colon.offset,
+            endAlternativeOffset: colon.offset,
+          );
+        case SwitchPatternCaseImpl(
+          :var guardedPattern,
+          :var keyword,
+          :var colon,
+        ):
           return CaseHeadInfo(
             pattern: guardedPattern.pattern,
             variables: guardedPattern.variables,
             guard: guardedPattern.whenClause?.expression2,
+            beginAlternativeOffset: keyword.offset,
+            finishJoinedPatternVariablesOffset: guardedPattern.pattern.end,
+            endAlternativeOffset: colon.offset,
           );
-        case SwitchDefaultImpl():
-          return CaseDefaultInfo();
+        case SwitchDefaultImpl(:var keyword, :var colon):
+          return CaseDefaultInfo(
+            beginAlternativeOffset: keyword.offset,
+            endAlternativeOffset: colon.offset,
+          );
       }
     }
 
@@ -1031,6 +1058,9 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       body: group.statements,
       variables: group.variables,
       hasLabels: group.hasLabels,
+      endOffset: index + 1 < node.memberGroups.length
+          ? node.memberGroups[index + 1].members.first.offset
+          : node.rightBracket.offset,
     );
   }
 
@@ -1208,20 +1238,21 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   /// If generic function instantiation should be performed on `expression`,
-  /// inserts a [FunctionReference] node which wraps [expression].
+  /// inserts an [ImplicitFunctionInstantiation] node wrapping [expression].
   ///
-  /// If an [FunctionReference] is inserted, returns it; otherwise, returns
+  /// If an instantiation is inserted, returns it; otherwise, returns
   /// [expression].
   ExpressionImpl insertGenericFunctionInstantiation(
     Expression expression, {
     required TypeImpl contextType,
   }) {
     expression as ExpressionImpl;
-    if (!isConstructorTearoffsEnabled) {
-      // Temporarily, only create [ImplicitCallReference] nodes under the
-      // 'constructor-tearoffs' feature.
-      // TODO(srawlins): When we are ready to make a breaking change release to
-      // the analyzer package, remove this exception.
+    var isLegacy = !isConstructorTearoffsEnabled;
+    if (isLegacy &&
+        expression is! NameExpressionImpl &&
+        expression is! SimpleIdentifierImpl &&
+        expression is! PrefixedIdentifierImpl &&
+        expression is! PropertyAccessImpl) {
       return expression;
     }
 
@@ -1235,7 +1266,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       return expression;
     }
 
-    var context = typeSystem.flatten(contextType);
+    var context = isLegacy ? contextType : typeSystem.flatten(contextType);
     if (context is! FunctionTypeImpl || context.typeParameters.isNotEmpty) {
       return expression;
     }
@@ -1245,9 +1276,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       staticType,
       diagnosticReporter: diagnosticReporter,
       errorNode: expression,
-      // If the constructor-tearoffs feature is enabled, then so is
-      // generic-metadata.
-      genericMetadataIsEnabled: true,
+      genericMetadataIsEnabled: genericMetadataIsEnabled,
       inferenceUsingBoundsIsEnabled: inferenceUsingBoundsIsEnabled,
       strictInference: analysisOptions.strictInference,
       strictCasts: analysisOptions.strictCasts,
@@ -1255,21 +1284,11 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       dataForTesting: inferenceHelper.dataForTesting,
       nodeForTesting: expression,
     );
-    if (typeArgumentTypes.isNotEmpty) {
-      staticType = staticType.instantiate(typeArgumentTypes);
+    if (typeArgumentTypes.isEmpty) {
+      return expression;
     }
 
-    var parent = expression.parent2;
-    var genericFunctionInstantiation = FunctionReferenceImpl(
-      function2: expression,
-      typeArguments: null,
-    );
-    replaceExpression(expression, genericFunctionInstantiation, parent: parent);
-
-    genericFunctionInstantiation.typeArgumentTypes = typeArgumentTypes;
-    genericFunctionInstantiation.setPseudoExpressionStaticType(staticType);
-
-    return genericFunctionInstantiation;
+    return wrapFunctionInstantiation(expression, typeArgumentTypes);
   }
 
   @override
@@ -1311,16 +1330,10 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   @override
-  int patternEndOffset(DartPatternImpl pattern) {
-    // TODO(paulberry): implement.
-    return 0;
-  }
+  int patternEndOffset(DartPatternImpl pattern) => pattern.end;
 
   @override
-  int patternStartOffset(DartPatternImpl pattern) {
-    // TODO(paulberry): implement.
-    return 0;
-  }
+  int patternStartOffset(DartPatternImpl pattern) => pattern.offset;
 
   /// Examines the top entry of [_rewriteStack] but does not pop it.
   ExpressionImpl? peekRewrite() => _rewriteStack.last;
@@ -1475,6 +1488,31 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     );
   }
 
+  ({
+    NamedReadResolutionImpl? read,
+    NamedWriteResolutionImpl? write,
+    ExpressionInfo? readExpressionInfo,
+  })?
+  resolveCascadeProperty(
+    ExpressionImpl node,
+    Token propertyName, {
+    required bool hasRead,
+    required bool hasWrite,
+  }) {
+    var cascade = _activeCascadeExpression;
+    if (cascade == null) {
+      throw StateError('Cascade property node outside a cascade section.');
+    }
+    return _propertyElementResolver.resolveCascadeProperty(
+      node: node,
+      receiver: cascade.target2,
+      isNullAware: cascade.isNullAware,
+      propertyName: propertyName,
+      hasRead: hasRead,
+      hasWrite: hasWrite,
+    );
+  }
+
   /// Resolve LHS [node] of an assignment, an explicit [AssignmentExpression],
   /// or implicit [IncrementOrDecrementExpression].
   PropertyElementResolverResult resolveForWrite({
@@ -1501,7 +1539,10 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       }
 
       if (node.isNullAware) {
-        _startNullAwareAccess(node.target2);
+        _startNullAwareAccess(
+          node.target2,
+          offset: (node.period ?? node.question ?? node.leftBracket).offset,
+        );
         nullSafetyDeadCodeVerifier.visitNode(node.index2);
       }
 
@@ -1578,7 +1619,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         popRewrite();
       }
       if (node.isNullAware) {
-        _startNullAwareAccess(node.target2);
+        _startNullAwareAccess(node.target2, offset: node.operator.offset);
         nullSafetyDeadCodeVerifier.visitNode(node.propertyName);
       }
 
@@ -1614,14 +1655,22 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     }
   }
 
+  void resolveImportPrefixedAssignmentTarget(
+    ImportPrefixedAssignmentTargetImpl node,
+  ) {
+    _propertyElementResolver.resolveImportPrefixedAssignmentTarget(node);
+  }
+
   IndexWriteResolutionImpl? resolveIndexDirectAssignmentTarget(
-    IndexAssignmentTargetImpl node,
+    ReceiverIndexAssignmentTargetImpl node,
   ) {
     return _propertyElementResolver.resolveIndexDirectAssignmentTarget(node);
   }
 
   ({IndexReadResolutionImpl read, IndexWriteResolutionImpl write})?
-  resolveIndexReadWriteAssignmentTarget(IndexAssignmentTargetImpl node) {
+  resolveIndexReadWriteAssignmentTarget(
+    ReceiverIndexAssignmentTargetImpl node,
+  ) {
     return _propertyElementResolver.resolveIndexReadWriteAssignmentTarget(node);
   }
 
@@ -1655,6 +1704,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node,
       typeArguments: typeArguments,
       elements: node.elements,
+      promoteForPatternOffset: node.leftBracket.offset,
     );
     node.requiredType = result.requiredType.unwrapTypeView();
 
@@ -1721,23 +1771,11 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     return (null, SharedTypeView(typeProvider.dynamicType));
   }
 
-  ({
-    NamedReadResolutionImpl read,
-    NamedWriteResolutionImpl write,
-    ExpressionInfo? readExpressionInfo,
-  })
-  resolvePrefixedPropertyReadWriteAssignmentTarget(
-    PropertyAssignmentTargetImpl node,
-    PrefixElement prefix,
+  NamedWriteResolutionImpl? resolveReceiverPropertyDirectAssignmentTarget(
+    ReceiverPropertyAssignmentTargetImpl node,
   ) {
     return _propertyElementResolver
-        .resolvePrefixedPropertyReadWriteAssignmentTarget(node, prefix);
-  }
-
-  NamedWriteResolutionImpl? resolvePropertyDirectAssignmentTarget(
-    PropertyAssignmentTargetImpl node,
-  ) {
-    return _propertyElementResolver.resolvePropertyDirectAssignmentTarget(node);
+        .resolveReceiverPropertyDirectAssignmentTarget(node);
   }
 
   ({
@@ -1745,10 +1783,11 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     NamedWriteResolutionImpl write,
     ExpressionInfo? readExpressionInfo,
   })?
-  resolvePropertyReadWriteAssignmentTarget(PropertyAssignmentTargetImpl node) {
-    return _propertyElementResolver.resolvePropertyReadWriteAssignmentTarget(
-      node,
-    );
+  resolveReceiverPropertyReadWriteAssignmentTarget(
+    ReceiverPropertyAssignmentTargetImpl node,
+  ) {
+    return _propertyElementResolver
+        .resolveReceiverPropertyReadWriteAssignmentTarget(node);
   }
 
   @override
@@ -1911,15 +1950,15 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   /// Starts null shorting for a null-aware assignment target.
-  void startNullAwareAssignmentTarget(ExpressionImpl target) {
-    _startNullAwareAccess(target);
+  void startNullAwareAssignmentTarget(
+    ExpressionImpl target, {
+    required int offset,
+  }) {
+    _startNullAwareAccess(target, offset: offset);
   }
 
   @override
-  int statementEndOffset(StatementImpl statement) {
-    // TODO(paulberry): implement.
-    return 0;
-  }
+  int statementEndOffset(StatementImpl statement) => statement.end;
 
   /// Returns the result of an implicit `this.` lookup for the identifier [node]
   /// in a getter context, or `null` if no match was found.
@@ -1929,10 +1968,8 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
   /// Returns the result of an implicit `this.` lookup for [node] in a getter
   /// context.
-  LexicalLookupResult? thisLookupGetter2(
-    UnqualifiedNameAssignmentTargetImpl node,
-  ) {
-    return ThisLookup.lookupGetter2(this, node: node, name: node.name.lexeme);
+  LexicalLookupResult? thisLookupGetter2(AstNode node, String name) {
+    return ThisLookup.lookupGetter2(this, node: node, name: name);
   }
 
   /// Returns the result of an implicit `this.` lookup for the identifier [node]
@@ -1980,6 +2017,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     flowAnalysis.withFlowAnalysis(
       node: node,
       formalParameters: null,
+      offset: node.atSign.offset,
       operation: () {
         var whyNotPromotedArguments =
             <Map<SharedTypeView, NonPromotionReason> Function()>[];
@@ -2009,11 +2047,11 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         imposedType: imposedType,
       );
 
-      flowAnalysis.flow?.anonymousBlockBody_begin();
+      flowAnalysis.flow?.anonymousBlockBody_begin(offset: node.block.offset);
       checkUnreachableNode(node);
       node.visitChildren2(this);
       var returnType = _finishFunctionBodyInference();
-      flowAnalysis.flow?.anonymousBlockBody_end();
+      flowAnalysis.flow?.anonymousBlockBody_end(offset: node.flowEndOffset);
 
       return returnType;
     } finally {
@@ -2063,6 +2101,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
     checkUnreachableNode(node.body);
 
+    var afterExpressionOffset = (node.parameters ?? node.body).offset;
     var targetType =
         node.realTarget2.staticType ?? typeProvider.objectQuestionType;
     var isNullAware = node.isNullAware;
@@ -2071,7 +2110,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         : targetType;
     var parameters = node.parameters;
     if (isNullAware) {
-      _startNullAwareAccess(node.target2);
+      _startNullAwareAccess(node.target2, offset: node.operator.offset);
       nullSafetyDeadCodeVerifier.visitNode(parameters ?? node.body);
     }
     if (parameters != null) {
@@ -2094,6 +2133,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
               element,
               SharedTypeView(element.type),
               initialized: false,
+              offset: afterExpressionOffset,
             );
             flow.initialize(
               element,
@@ -2103,6 +2143,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
               isLate: false,
               isImplicitlyTyped: parameter.type == null,
               inheritPromotableProperties: false,
+              offset: afterExpressionOffset,
             );
           } else {
             // An error will occur because there are multiple parameters, but
@@ -2112,6 +2153,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
               element,
               SharedTypeView(element.type),
               initialized: true,
+              offset: afterExpressionOffset,
             );
           }
         }
@@ -2126,11 +2168,14 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
           : null;
       var body = node.body;
       returnedType = _withUnpromotedThisType(parameterType, () {
-        flowAnalysis.flow?.thisBinding_begin(targetInfo);
+        flowAnalysis.flow?.thisBinding_begin(
+          targetInfo,
+          offset: afterExpressionOffset,
+        );
         try {
           return body.resolve(this, contextType);
         } finally {
-          flowAnalysis.flow?.thisBinding_end();
+          flowAnalysis.flow?.thisBinding_end(offset: node.body.flowEndOffset);
         }
       });
       if (body is AnonymousExpressionBodyImpl) {
@@ -2189,25 +2234,36 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
     typeAnalyzer.visitAsExpression(node);
     flowAnalysis.asExpression(node);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
 
     var expression = node.expression2;
     var staticType = node.staticType;
-    if (staticType != null && expression is SimpleIdentifier) {
-      var simpleIdentifier = expression as SimpleIdentifier;
-      var element = simpleIdentifier.element;
+    if (staticType != null) {
+      var (element, name, errorEntity) = switch (expression) {
+        SimpleIdentifier(:var element, :var name) => (
+          element,
+          name,
+          expression as SyntacticEntity,
+        ),
+        UnqualifiedNameExpression(
+          :var name,
+          resolution: VariableReadResolution(:var element),
+        ) =>
+          (element, name.lexeme, name as SyntacticEntity),
+        _ => (null, '', expression as SyntacticEntity),
+      };
       if (element is PromotableElementImpl &&
           !expression.typeOrThrow.isDartCoreNull &&
           typeSystem.isNullable(element.type) &&
           typeSystem.isNonNullable(staticType) &&
-          flowAnalysis.isDefinitelyUnassigned(simpleIdentifier, element)) {
+          flowAnalysis.isDefinitelyUnassigned(expression, element)) {
         diagnosticReporter.report(
           diag.castFromNullableAlwaysFails
-              .withArguments(name: simpleIdentifier.name)
-              .at(simpleIdentifier),
+              .withArguments(name: name)
+              .at(errorEntity),
         );
       }
     }
@@ -2216,7 +2272,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
   @override
   void visitAssertInitializer(covariant AssertInitializerImpl node) {
-    flowAnalysis.flow?.assert_begin();
+    flowAnalysis.flow?.assert_begin(offset: node.assertKeyword.offset);
     analyzeExpression(
       node.condition2,
       SharedTypeSchemaView(typeProvider.boolType),
@@ -2231,19 +2287,20 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     );
     flowAnalysis.flow?.assert_afterCondition(
       flowAnalysis.getExpressionInfo(node.condition2),
+      offset: (node.comma ?? node.rightParenthesis).offset,
     );
     if (node.message2 case var message?) {
       analyzeExpression(message, operations.unknownType);
       popRewrite();
     }
-    flowAnalysis.flow?.assert_end();
+    flowAnalysis.flow?.assert_end(offset: node.end);
   }
 
   @override
   void visitAssertStatement(covariant AssertStatementImpl node) {
     inferenceLogWriter?.enterStatement(node);
     checkUnreachableNode(node);
-    flowAnalysis.flow?.assert_begin();
+    flowAnalysis.flow?.assert_begin(offset: node.assertKeyword.offset);
     analyzeExpression(
       node.condition2,
       SharedTypeSchemaView(typeProvider.boolType),
@@ -2258,12 +2315,13 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     );
     flowAnalysis.flow?.assert_afterCondition(
       flowAnalysis.getExpressionInfo(node.condition2),
+      offset: (node.comma ?? node.rightParenthesis).offset,
     );
     if (node.message2 case var message?) {
       analyzeExpression(message, operations.unknownType);
       popRewrite();
     }
-    flowAnalysis.flow?.assert_end();
+    flowAnalysis.flow?.assert_end(offset: node.rightParenthesis.offset);
     inferenceLogWriter?.exitStatement(node);
   }
 
@@ -2278,7 +2336,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node as AssignmentExpressionImpl,
       contextType: contextType,
     );
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -2302,7 +2360,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       analysisResult.type.unwrapTypeView<TypeImpl>(),
       resolver: this,
     );
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -2320,7 +2378,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node,
       contextType: contextType,
     );
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -2392,6 +2450,49 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   @override
+  void visitCallInvocation(
+    covariant CallInvocationImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+
+    // If [isDotShorthand] is set, cache the context type for resolution.
+    if (isDotShorthand(node)) {
+      pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
+    }
+
+    analyzeExpression(
+      node.receiver as ExpressionImpl,
+      SharedTypeSchemaView(UnknownInferredType.instance),
+      continueNullShorting: true,
+    );
+    node.receiver = popRewrite()!;
+
+    var whyNotPromotedArguments =
+        <Map<SharedTypeView, NonPromotionReason> Function()>[];
+    callInvocationResolver.resolve(
+      node,
+      whyNotPromotedArguments,
+      contextType: contextType,
+    );
+    var replacement = insertGenericFunctionInstantiation(
+      node,
+      contextType: contextType,
+    );
+    checkForArgumentTypesNotAssignableInList(
+      node.argumentList,
+      whyNotPromotedArguments,
+    );
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
+
+    if (isDotShorthand(node)) {
+      popDotShorthandContext();
+    }
+
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  @override
   void visitCascadeExpression(
     covariant CascadeExpressionImpl node, {
     TypeImpl contextType = UnknownInferredType.instance,
@@ -2406,6 +2507,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       flowAnalysis.getExpressionInfo(node.target2),
       SharedTypeView(targetType),
       isNullAware: node.isNullAware,
+      offset: node.sections.first.body.offset,
     );
 
     var previousCascade = _activeCascadeExpression;
@@ -2422,13 +2524,13 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     typeAnalyzer.visitCascadeExpression(node);
 
     if (node.isNullAware) {
-      flowAnalysis.flow!.nullAwareAccess_end();
+      flowAnalysis.flow!.nullAwareAccess_end(offset: node.end);
     }
     flowAnalysis.storeExpressionInfo(
       node,
       flowAnalysis.flow!.cascadeExpression_end(),
     );
-    _insertImplicitCallReference(node, contextType: contextType);
+    _insertImplicitCallTearOff(node, contextType: contextType);
     nullSafetyDeadCodeVerifier.verifyCascadeExpression(node);
     inferenceLogWriter?.exitExpression(node);
   }
@@ -2478,7 +2580,117 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node,
       contextType: contextType,
     );
-    _insertImplicitCallReference(replacement, contextType: contextType);
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  @override
+  void visitCascadeMethodInvocation(
+    covariant CascadeMethodInvocationImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+    checkUnreachableNode(node);
+    node.typeArguments?.accept2(this);
+
+    var previousResolution = node.resolution;
+    var previousInvokeType = node.staticInvokeType;
+    var cascadeTargetType = typeSystem.resolveToBound(
+      _activeCascadeExpression!.target2.typeOrThrow,
+    );
+    InvocationTarget? target = switch (previousResolution) {
+      ExecutableInvocationResolutionImpl(:var element) =>
+        InvocationTargetExecutableElement(element),
+      FunctionCallInvocationResolutionImpl()
+          when cascadeTargetType is FunctionTypeImpl =>
+        InvocationTargetFunctionTypedExpression(cascadeTargetType),
+      InvalidInvocationResolutionImpl(
+        recovery: ExecutableInvocationResolutionImpl(:var element),
+      ) =>
+        InvocationTargetExecutableElement(element),
+      InvalidInvocationResolutionImpl(
+        recovery: FunctionCallInvocationResolutionImpl(:var invokeType),
+      ) =>
+        InvocationTargetFunctionTypedExpression(invokeType),
+      _ => null,
+    };
+
+    var whyNotPromotedArguments =
+        <Map<SharedTypeView, NonPromotionReason> Function()>[];
+    var inferredType =
+        CascadeMethodInvocationInferrer(
+              resolver: this,
+              node: node,
+              argumentList: node.argumentList,
+              whyNotPromotedArguments: whyNotPromotedArguments,
+              contextType: contextType,
+              target: target,
+            ).resolveInvocation()
+            as TypeImpl;
+
+    node.resolution = switch (previousResolution) {
+      ExecutableInvocationResolutionImpl(:var element) =>
+        ExecutableInvocationResolutionImpl(
+          element: element,
+          invokeType: node.staticInvokeType as FunctionTypeImpl,
+          type: inferredType,
+        ),
+      FunctionCallInvocationResolutionImpl() =>
+        FunctionCallInvocationResolutionImpl(
+          invokeType: node.staticInvokeType as FunctionTypeImpl,
+          type: inferredType,
+        ),
+      _ => previousResolution,
+    };
+    if (target == null) {
+      node.staticInvokeType = previousInvokeType;
+    }
+    node.recordStaticType(
+      node.resolution?.type ?? node.typeOrThrow,
+      resolver: this,
+    );
+
+    var replacement = insertGenericFunctionInstantiation(
+      node,
+      contextType: contextType,
+    );
+    checkForArgumentTypesNotAssignableInList(
+      node.argumentList,
+      whyNotPromotedArguments,
+    );
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  @override
+  void visitCascadePropertyExtraction(
+    covariant CascadePropertyExtractionImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+    checkUnreachableNode(node);
+
+    var result = resolveCascadeProperty(
+      node,
+      node.name,
+      hasRead: true,
+      hasWrite: false,
+    );
+    var resolution = result?.read;
+    node.resolution = resolution;
+    node.recordStaticType(
+      resolution?.type ?? NeverTypeImpl.instance,
+      resolver: this,
+    );
+    if (result?.readExpressionInfo case var expressionInfo?) {
+      flowAnalysis.storeExpressionInfo(node, expressionInfo);
+    }
+
+    var replacement = insertGenericFunctionInstantiation(
+      node,
+      contextType: contextType,
+    );
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
     inferenceLogWriter?.exitExpression(node);
   }
 
@@ -2581,7 +2793,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node,
       contextType: contextType,
     );
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -2597,7 +2809,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     checkUnreachableNode(node);
     ExpressionImpl condition = node.condition2;
     var flow = flowAnalysis.flow;
-    flow?.conditional_conditionBegin();
+    flow?.conditional_conditionBegin(offset: node.offset);
 
     analyzeExpression(
       node.condition2,
@@ -2616,6 +2828,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       flow.conditional_thenBegin(
         flowAnalysis.getExpressionInfo(condition),
         node,
+        offset: node.question.offset,
       );
       checkUnreachableNode(node.thenExpression2);
     }
@@ -2629,6 +2842,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       flow.conditional_elseBegin(
         flowAnalysis.getExpressionInfo(node.thenExpression2),
         SharedTypeView(node.thenExpression2.typeOrThrow),
+        offset: node.colon.offset,
       );
       checkUnreachableNode(elseExpression);
       analyzeExpression(elseExpression, SharedTypeSchemaView(contextType));
@@ -2645,11 +2859,12 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
           SharedTypeView(node.typeOrThrow),
           flowAnalysis.getExpressionInfo(elseExpression),
           SharedTypeView(elseExpression.typeOrThrow),
+          offset: node.end,
         ),
       );
       nullSafetyDeadCodeVerifier.flowEnd(elseExpression);
     }
-    _insertImplicitCallReference(node, contextType: contextType);
+    _insertImplicitCallTearOff(node, contextType: contextType);
     inferenceLogWriter?.exitExpression(node);
   }
 
@@ -2672,11 +2887,17 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         node.metadata.accept2(this);
         node.parameters.accept2(this);
 
-        flowAnalysis.bodyOrInitializer_enter(node, element.formalParameters);
+        var beforeInitializersOffset = (node.separator ?? node.body).offset;
+        flowAnalysis.bodyOrInitializer_enter(
+          node,
+          element.formalParameters,
+          offset: beforeInitializersOffset,
+        );
         flowAnalysis.executableDeclaration_enter(
           node,
           element.formalParameters,
           isClosure: false,
+          offset: beforeInitializersOffset,
         );
 
         node.initializers.accept2(this);
@@ -2687,8 +2908,12 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         if (node.factoryKeyword != null) {
           checkForBodyMayCompleteNormally(body: node.body, errorNode: node);
         }
-        flowAnalysis.executableDeclaration_exit(node.body, false);
-        flowAnalysis.bodyOrInitializer_exit();
+        flowAnalysis.executableDeclaration_exit(
+          node.body,
+          false,
+          offset: node.body.flowEndOffset,
+        );
+        node.body.flowAnalysisLog = flowAnalysis.bodyOrInitializer_exit();
         nullSafetyDeadCodeVerifier.flowEnd(node);
       });
     });
@@ -2732,7 +2957,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     // invalid default-value expressions that still need expression resolution.
     node.constructorReference.typeReference.typeArguments?.accept2(this);
     constructorInvocationResolver.resolve(node, contextType: contextType);
-    _insertImplicitCallReference(node, contextType: contextType);
+    _insertImplicitCallTearOff(node, contextType: contextType);
     inferenceLogWriter?.exitExpression(node);
   }
 
@@ -2754,7 +2979,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }) {
     inferenceLogWriter?.enterExpression(node, contextType);
     _constructorTearOffResolver.resolve(node, contextType: contextType);
-    _insertImplicitCallReference(node, contextType: contextType);
+    _insertImplicitCallTearOff(node, contextType: contextType);
     inferenceLogWriter?.exitExpression(node);
   }
 
@@ -2788,7 +3013,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     inferenceLogWriter?.enterExpression(node, contextType);
     checkUnreachableNode(node);
     _assignmentExpressionResolver.resolveDirect(node, contextType: contextType);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -2802,10 +3027,12 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
     var condition = node.condition2;
 
-    flowAnalysis.flow?.doStatement_bodyBegin(node);
+    flowAnalysis.flow?.doStatement_bodyBegin(node, offset: node.offset);
     node.body.accept2(this);
 
-    flowAnalysis.flow?.doStatement_conditionBegin();
+    flowAnalysis.flow?.doStatement_conditionBegin(
+      offset: node.whileKeyword.offset,
+    );
     analyzeExpression(condition, SharedTypeSchemaView(typeProvider.boolType));
     condition = popRewrite()!;
     var whyNotPromoted = flowAnalysis.flow?.whyNotPromoted(
@@ -2818,6 +3045,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
     flowAnalysis.flow?.doStatement_end(
       flowAnalysis.getExpressionInfo(condition),
+      offset: node.semicolon.offset,
     );
     inferenceLogWriter?.exitStatement(node);
   }
@@ -2829,14 +3057,58 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }) {
     inferenceLogWriter?.enterExpression(node, contextType);
 
-    // If [isDotShorthand] is set, cache the context type for resolution.
+    var hasDotShorthandContext = isDotShorthand(node);
+    if (hasDotShorthandContext) {
+      pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
+    }
+
+    var shorthandContext = _resolveDotShorthandContext();
+
+    var replacement =
+        DotShorthandConstructorInvocation2Impl(
+            constKeyword: node.constKeyword,
+            period: node.period,
+            name: node.constructorName.token,
+            typeArguments: node.typeArguments,
+            argumentList: node.argumentList,
+          )
+          ..isDotShorthand = node.isDotShorthand
+          ..shorthandContext = shorthandContext;
+    replaceExpression(node, replacement);
+    flowAnalysis.transferExpressionInfo(node, replacement);
+    flowAnalysis.transferTestData(node, replacement);
+    inferenceHelper.transferTestData(node, replacement);
+    constructorInvocationResolver.resolveDotShorthand(
+      replacement,
+      contextType: contextType,
+      shorthandContext: shorthandContext,
+    );
+
+    if (hasDotShorthandContext) {
+      popDotShorthandContext();
+    }
+
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  @override
+  void visitDotShorthandConstructorInvocation2(
+    covariant DotShorthandConstructorInvocation2Impl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+
     if (isDotShorthand(node)) {
       pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
     }
 
+    var shorthandContext = _resolveDotShorthandContext();
+    node.shorthandContext = shorthandContext;
+
     constructorInvocationResolver.resolveDotShorthand(
       node,
       contextType: contextType,
+      shorthandContext: shorthandContext,
     );
 
     if (isDotShorthand(node)) {
@@ -2858,6 +3130,8 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
     }
 
+    var shorthandContext = _resolveDotShorthandContext();
+
     checkUnreachableNode(node);
     var whyNotPromotedArguments =
         <Map<SharedTypeView, NonPromotionReason> Function()>[];
@@ -2867,21 +3141,32 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node,
       whyNotPromotedArguments: whyNotPromotedArguments,
       contextType: contextType,
+      shorthandContext: shorthandContext,
     );
+
+    ExpressionImpl resolvedExpression = node;
+    if (rewrittenExpression == null) {
+      resolvedExpression = _rewriteDotShorthandMethodInvocation(
+        node,
+        shorthandContext,
+      );
+    }
 
     // TODO(paulberry): why don't we do this for
     // DotShorthandConstructorInvocationImpl?
-    if (rewrittenExpression is FunctionExpressionInvocationImpl ||
+    if (rewrittenExpression is CallInvocationImpl ||
         rewrittenExpression == null) {
       var replacement = insertGenericFunctionInstantiation(
-        node,
+        resolvedExpression,
         contextType: contextType,
       );
       checkForArgumentTypesNotAssignableInList(
-        node.argumentList,
+        resolvedExpression is FunctionInvocationImpl
+            ? resolvedExpression.argumentList
+            : node.argumentList,
         whyNotPromotedArguments,
       );
-      _insertImplicitCallReference(replacement, contextType: contextType);
+      _insertImplicitCallTearOff(replacement, contextType: contextType);
     }
 
     if (isDotShorthand(node)) {
@@ -2892,33 +3177,53 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   @override
+  void visitDotShorthandMethodInvocation(
+    covariant DotShorthandMethodInvocationImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    _resolveDirectNamedFunctionInvocation(node, contextType: contextType);
+  }
+
+  @override
+  void visitDotShorthandNameExpression(
+    covariant DotShorthandNameExpressionImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+    _resolveDotShorthandNameExpression(node, contextType);
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  @override
   void visitDotShorthandPropertyAccess(
     covariant DotShorthandPropertyAccessImpl node, {
     TypeImpl contextType = UnknownInferredType.instance,
   }) {
     inferenceLogWriter?.enterExpression(node, contextType);
-
-    // If [isDotShorthand] is set, cache the context type for resolution.
-    if (isDotShorthand(node)) {
+    var hasDotShorthandContext = isDotShorthand(node);
+    if (hasDotShorthandContext) {
+      // Preserve the parser node as the context-stack key. This both reuses a
+      // context already cached specifically for this shorthand (for example,
+      // on the right of `==`) and distinguishes this shorthand from an outer
+      // shorthand whose argument happens to contain it.
       pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
     }
-
-    checkUnreachableNode(node);
-    var result = _propertyElementResolver.resolveDotShorthand(
-      node,
-      contextType: contextType,
-    );
-    _resolvePropertyAccessRhs_common(
-      result,
-      node,
-      node.propertyName,
+    var replacement = DotShorthandNameExpressionImpl(
+      period: node.period,
+      name: node.propertyName.token,
+    )..isDotShorthand = node.isDotShorthand;
+    replaceExpression(node, replacement);
+    flowAnalysis.transferExpressionInfo(node, replacement);
+    flowAnalysis.transferTestData(node, replacement);
+    inferenceHelper.transferTestData(node, replacement);
+    _resolveDotShorthandNameExpression(
+      replacement,
       contextType,
+      cacheContext: false,
     );
-
-    if (isDotShorthand(node)) {
+    if (hasDotShorthandContext) {
       popDotShorthandContext();
     }
-
     inferenceLogWriter?.exitExpression(node);
   }
 
@@ -3038,6 +3343,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       flowAnalysis.withFlowAnalysis(
         node: node,
         formalParameters: null,
+        offset: arguments.offset,
         operation: () {
           for (var argument in argumentList.arguments2) {
             analyzeExpression(
@@ -3106,7 +3412,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       );
       popRewrite();
 
-      flowAnalysis.flow?.handleReturn();
+      flowAnalysis.flow?.handleReturn(offset: node.flowEndOffset);
 
       bodyContext.addReturnExpression(node.expression2);
       return _finishFunctionBodyInference();
@@ -3233,6 +3539,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     flowAnalysis.withFlowAnalysis(
       node: node,
       formalParameters: null,
+      offset: node.offset,
       operation: () {
         checkUnreachableNode(node);
         node.visitChildren2(this);
@@ -3262,15 +3569,27 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node.metadata.accept2(this);
       node.returnType?.accept2(this);
 
+      // Use typeParameters or parameters for the offset if available, because
+      // they will be visited before the body, and may contain expressions.
+      var enterOffset =
+          (node.functionExpression.typeParameters ??
+                  node.functionExpression.parameters ??
+                  node.functionExpression.body)
+              .offset;
       if (isLocal) {
-        flowAnalysis.flow!.functionExpression_begin(node);
+        flowAnalysis.flow!.functionExpression_begin(node, offset: enterOffset);
       } else {
-        flowAnalysis.bodyOrInitializer_enter(node, element.formalParameters);
+        flowAnalysis.bodyOrInitializer_enter(
+          node,
+          element.formalParameters,
+          offset: enterOffset,
+        );
       }
       flowAnalysis.executableDeclaration_enter(
         node,
         element.formalParameters,
         isClosure: isLocal,
+        offset: enterOffset,
       );
 
       // node.functionExpression isn't a real expression, so visit it directly
@@ -3291,14 +3610,17 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
           errorNode: node.name,
         );
       }
+      var exitOffset = node.functionExpression.body.flowEndOffset;
       flowAnalysis.executableDeclaration_exit(
         node.functionExpression.body,
         isLocal,
+        offset: exitOffset,
       );
       if (isLocal) {
-        flowAnalysis.flow!.functionExpression_end();
+        flowAnalysis.flow!.functionExpression_end(offset: exitOffset);
       } else {
-        flowAnalysis.bodyOrInitializer_exit();
+        node.functionExpression.body.flowAnalysisLog = flowAnalysis
+            .bodyOrInitializer_exit();
       }
       nullSafetyDeadCodeVerifier.flowEnd(node);
     });
@@ -3327,46 +3649,14 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   @override
-  void visitFunctionExpressionInvocation(
-    covariant FunctionExpressionInvocationImpl node, {
+  void visitFunctionInstantiation(
+    covariant FunctionInstantiationImpl node, {
     TypeImpl contextType = UnknownInferredType.instance,
   }) {
-    inferenceLogWriter?.enterExpression(node, contextType);
-
-    // If [isDotShorthand] is set, cache the context type for resolution.
-    if (isDotShorthand(node)) {
-      pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
-    }
-
-    analyzeExpression(
-      node.function2,
-      SharedTypeSchemaView(UnknownInferredType.instance),
-      continueNullShorting: true,
-    );
-    node.function2 = popRewrite()!;
-
-    var whyNotPromotedArguments =
-        <Map<SharedTypeView, NonPromotionReason> Function()>[];
-    functionExpressionInvocationResolver.resolve(
-      node,
-      whyNotPromotedArguments,
-      contextType: contextType,
-    );
-    var replacement = insertGenericFunctionInstantiation(
-      node,
-      contextType: contextType,
-    );
-    checkForArgumentTypesNotAssignableInList(
-      node.argumentList,
-      whyNotPromotedArguments,
-    );
-    _insertImplicitCallReference(replacement, contextType: contextType);
-
-    if (isDotShorthand(node)) {
-      popDotShorthandContext();
-    }
-
-    inferenceLogWriter?.exitExpression(node);
+    checkUnreachableNode(node);
+    analyzeExpression(node.operand, operations.unknownType);
+    popRewrite();
+    node.typeArguments.accept2(this);
   }
 
   @override
@@ -3431,6 +3721,10 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         ifTrue: node.thenElement2,
         ifFalse: node.elseElement2,
         context: context,
+        afterExpressionOffset: caseClause.offset,
+        thenBeginOffset: node.rightParenthesis.offset,
+        elseBeginOffset: node.elseKeyword?.offset,
+        endOffset: node.end,
       );
       // Stack: (Expression, Guard)
       popRewrite(); // guard
@@ -3442,6 +3736,9 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         ifTrue: node.thenElement2,
         ifFalse: node.elseElement2,
         context: context,
+        thenBeginOffset: node.rightParenthesis.offset,
+        elseBeginOffset: node.elseKeyword?.offset,
+        endOffset: node.end,
       );
     }
     inferenceLogWriter?.exitElement(node);
@@ -3455,7 +3752,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     inferenceLogWriter?.enterExpression(node, contextType);
     checkUnreachableNode(node);
     _binaryExpressionResolver.resolveIfNull(node, contextType: contextType);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -3470,7 +3767,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     inferenceLogWriter?.enterExpression(node, contextType);
     checkUnreachableNode(node);
     _assignmentExpressionResolver.resolveIfNull(node, contextType: contextType);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -3493,6 +3790,9 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         node.thenStatement,
         node.elseStatement,
         guardedPattern.variables,
+        afterExpressionOffset: caseClause.caseKeyword.offset,
+        thenBeginOffset: node.rightParenthesis.offset,
+        elseBeginOffset: node.elseKeyword?.offset,
       );
       // Stack: (Expression, Guard)
       popRewrite(); // guard
@@ -3503,6 +3803,8 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         node.expression2,
         node.thenStatement,
         node.elseStatement,
+        thenBeginOffset: node.rightParenthesis.offset,
+        elseBeginOffset: node.elseKeyword?.offset,
       );
     }
     inferenceLogWriter?.exitStatement(node);
@@ -3529,10 +3831,90 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   @override
+  void visitImplicitCallTearOff(
+    covariant ImplicitCallTearOffImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    checkUnreachableNode(node);
+    analyzeExpression(
+      node.operand,
+      SharedTypeSchemaView(UnknownInferredType.instance),
+    );
+    popRewrite();
+  }
+
+  @override
+  void visitImplicitFunctionInstantiation(
+    covariant ImplicitFunctionInstantiationImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    checkUnreachableNode(node);
+    analyzeExpression(
+      node.operand,
+      SharedTypeSchemaView(UnknownInferredType.instance),
+    );
+    popRewrite();
+  }
+
+  @override
   void visitImportDirective(ImportDirective node) {
     checkUnreachableNode(node);
     node.visitChildren2(this);
     elementResolver.visitImportDirective(node as ImportDirectiveImpl);
+  }
+
+  @override
+  void visitImportPrefixedFunctionInvocation(
+    covariant ImportPrefixedFunctionInvocationImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    _resolveDirectNamedFunctionInvocation(node, contextType: contextType);
+  }
+
+  @override
+  void visitImportPrefixedNameExpression(
+    covariant ImportPrefixedNameExpressionImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+    checkUnreachableNode(node);
+    var resolution = _propertyElementResolver
+        .resolveImportPrefixedNameExpression(node);
+    node.resolution = resolution;
+    node.recordStaticType(resolution.type, resolver: this);
+    var replacement = insertGenericFunctionInstantiation(
+      node,
+      contextType: contextType,
+    );
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  @override
+  void visitIncrementOrDecrementExpression(
+    covariant IncrementOrDecrementExpressionImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+
+    // If [isDotShorthand] is set, cache the context type for resolution.
+    var hasDotShorthandContext = isDotShorthand(node);
+    if (hasDotShorthandContext) {
+      pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
+    }
+
+    checkUnreachableNode(node);
+    _incrementOrDecrementResolver.resolve(node);
+    _insertImplicitCallTearOff(
+      insertGenericFunctionInstantiation(node, contextType: contextType),
+      contextType: contextType,
+    );
+
+    if (hasDotShorthandContext) {
+      popDotShorthandContext();
+    }
+
+    inferenceLogWriter?.exitExpression(node);
   }
 
   @override
@@ -3561,7 +3943,10 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     var targetType = node.realTarget2.staticType;
 
     if (node.isNullAware) {
-      _startNullAwareAccess(node.target2);
+      _startNullAwareAccess(
+        node.target2,
+        offset: (node.period ?? node.question ?? node.leftBracket).offset,
+      );
       nullSafetyDeadCodeVerifier.visitNode(node.index2);
     }
 
@@ -3605,84 +3990,8 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       contextType: contextType,
     );
 
-    _insertImplicitCallReference(replacement, contextType: contextType);
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
     nullSafetyDeadCodeVerifier.verifyIndexExpression(node);
-
-    if (isDotShorthand(node)) {
-      popDotShorthandContext();
-    }
-
-    inferenceLogWriter?.exitExpression(node);
-  }
-
-  @override
-  void visitIndexExpression2(
-    covariant IndexExpression2Impl node, {
-    TypeImpl contextType = UnknownInferredType.instance,
-  }) {
-    inferenceLogWriter?.enterExpression(node, contextType);
-
-    if (isDotShorthand(node)) {
-      pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
-    }
-
-    checkUnreachableNode(node);
-    analyzeExpression(
-      node.receiver,
-      SharedTypeSchemaView(UnknownInferredType.instance),
-      continueNullShorting: true,
-    );
-    node.receiver = popRewrite()!;
-
-    var receiverDoesNotComplete =
-        node.receiver is! ExtensionOverrideImpl &&
-        identical(
-          typeSystem.resolveToBound(node.receiver.typeOrThrow),
-          NeverTypeImpl.instance,
-        );
-    if (node.question != null && !receiverDoesNotComplete) {
-      _startNullAwareAccess(node.receiver);
-      nullSafetyDeadCodeVerifier.visitNode(node.index);
-    }
-
-    var resolution = _propertyElementResolver.resolveIndexExpression2(node);
-    node.resolution = resolution;
-
-    analyzeExpression(
-      node.index,
-      SharedTypeSchemaView(
-        resolution?.indexContextType ?? UnknownInferredType.instance,
-      ),
-    );
-    node.index = popRewrite()!;
-    var whyNotPromoted = flowAnalysis.flow?.whyNotPromoted(
-      flowAnalysis.getExpressionInfo(node.index),
-    );
-    var readElement = switch (resolution) {
-      MethodIndexReadResolutionImpl(:var element) => element,
-      InvalidIndexReadResolutionImpl(
-        recovery: MethodIndexReadResolutionImpl(:var element),
-      ) =>
-        element,
-      _ => null,
-    };
-    checkIndexExpressionIndex(
-      node.index,
-      readElement: readElement,
-      writeElement: null,
-      whyNotPromoted: whyNotPromoted,
-    );
-
-    node.recordStaticType(
-      resolution?.type ?? NeverTypeImpl.instance,
-      resolver: this,
-    );
-    var replacement = insertGenericFunctionInstantiation(
-      node,
-      contextType: contextType,
-    );
-    _insertImplicitCallReference(replacement, contextType: contextType);
-    nullSafetyDeadCodeVerifier.verifyIndexExpression2(node);
 
     if (isDotShorthand(node)) {
       popDotShorthandContext();
@@ -3782,7 +4091,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     inferenceLogWriter?.enterExpression(node, contextType);
     checkUnreachableNode(node);
     _binaryExpressionResolver.resolveLogicalAnd(node);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -3797,7 +4106,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     inferenceLogWriter?.enterExpression(node, contextType);
     checkUnreachableNode(node);
     _logicalNotResolver.resolve(node);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -3812,7 +4121,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     inferenceLogWriter?.enterExpression(node, contextType);
     checkUnreachableNode(node);
     _binaryExpressionResolver.resolveLogicalOr(node);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -3843,6 +4152,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       flowAnalysis.getExpressionInfo(node.key2),
       keyType,
       isKeyNullAware: node.keyQuestion != null,
+      offset: node.separator.offset,
     );
 
     // If the value is null-aware, the context of the expression under `?`
@@ -3859,6 +4169,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
     flowAnalysis.flow?.nullAwareMapEntry_end(
       isKeyNullAware: node.keyQuestion != null,
+      offset: node.end,
     );
     inferenceLogWriter?.exitElement(node);
   }
@@ -3878,11 +4189,20 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         node.typeParameters?.accept2(this);
         node.parameters?.accept2(this);
 
-        flowAnalysis.bodyOrInitializer_enter(node, element.formalParameters);
+        // Use typeParameters or parameters for the offset if available, because
+        // they will be visited before the body, and may contain expressions.
+        var enterOffset =
+            (node.typeParameters ?? node.parameters ?? node.body).offset;
+        flowAnalysis.bodyOrInitializer_enter(
+          node,
+          element.formalParameters,
+          offset: enterOffset,
+        );
         flowAnalysis.executableDeclaration_enter(
           node,
           element.formalParameters,
           isClosure: false,
+          offset: enterOffset,
         );
 
         node.body.resolve(this, returnType is DynamicType ? null : returnType);
@@ -3894,8 +4214,12 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
             errorNode: node.name,
           );
         }
-        flowAnalysis.executableDeclaration_exit(node.body, false);
-        flowAnalysis.bodyOrInitializer_exit();
+        flowAnalysis.executableDeclaration_exit(
+          node.body,
+          false,
+          offset: node.body.flowEndOffset,
+        );
+        node.body.flowAnalysisLog = flowAnalysis.bodyOrInitializer_exit();
         nullSafetyDeadCodeVerifier.flowEnd(node);
       });
     });
@@ -3927,7 +4251,10 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     }
 
     if (node.isNullAware) {
-      _startNullAwareAccess(target);
+      _startNullAwareAccess(
+        target,
+        offset: (node.operator ?? node.methodName).offset,
+      );
       nullSafetyDeadCodeVerifier.visitNode(node.methodName);
     }
 
@@ -3938,15 +4265,43 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       contextType: contextType,
     );
 
+    ExpressionImpl resolvedNode = peekRewrite()!;
+    if (identical(resolvedNode, node) && node.isCascaded) {
+      resolvedNode = _rewriteCascadeMethodInvocation(node);
+    } else if (identical(resolvedNode, node) && node.target2 == null) {
+      resolvedNode = _rewriteUnqualifiedFunctionInvocation(node);
+    } else if (identical(resolvedNode, node)) {
+      var target = node.target2;
+      if (target is SimpleIdentifierImpl) {
+        var prefixElement = target.element;
+        if (prefixElement is PrefixElement) {
+          if (node.operator?.type == TokenType.PERIOD) {
+            resolvedNode = _rewriteImportPrefixedFunctionInvocation(
+              node,
+              prefixElement,
+            );
+          }
+        }
+      }
+      if (identical(resolvedNode, node) &&
+          target != null &&
+          !isDotShorthand(node) &&
+          (node.operator?.type == TokenType.PERIOD ||
+              node.operator?.type == TokenType.QUESTION_PERIOD) &&
+          _isSupportedReceiverMethodInvocationReceiver(target)) {
+        resolvedNode = _rewriteReceiverMethodInvocation(node, target);
+      }
+    }
+
     var replacement = insertGenericFunctionInstantiation(
-      node,
+      resolvedNode,
       contextType: contextType,
     );
     checkForArgumentTypesNotAssignableInList(
       node.argumentList,
       whyNotPromotedArguments,
     );
-    _insertImplicitCallReference(replacement, contextType: contextType);
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
     nullSafetyDeadCodeVerifier.verifyMethodInvocation(node);
 
     if (isDotShorthand(node)) {
@@ -4045,7 +4400,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
     checkUnreachableNode(node);
     _nullAssertionExpressionResolver.resolve(node, contextType: contextType);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -4138,6 +4493,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node,
       node.pattern,
       node.expression2,
+      beforeRhsOffset: node.equals.offset,
     );
     node.patternTypeSchema = analysisResult.patternSchema
         .unwrapTypeSchemaView();
@@ -4161,6 +4517,9 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node.pattern,
       node.expression2,
       isFinal: node.keyword.keyword == Keyword.FINAL,
+      beforePatternOffset: node.keyword.offset,
+      beforeInitializerOffset: node.equals.offset,
+      endOffset: node.end,
     ).patternSchema;
     node.patternTypeSchema = patternSchema.unwrapTypeSchemaView();
     popRewrite(); // expression
@@ -4174,30 +4533,6 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     checkUnreachableNode(node);
     node.declaration.accept2(this);
     inferenceLogWriter?.exitStatement(node);
-  }
-
-  @override
-  void visitPostfixDecrement(
-    covariant PostfixDecrementImpl node, {
-    TypeImpl contextType = UnknownInferredType.instance,
-  }) {
-    _visitIncrementOrDecrement(node, contextType: contextType);
-  }
-
-  @override
-  void visitPostfixIncrement(
-    covariant PostfixIncrementImpl node, {
-    TypeImpl contextType = UnknownInferredType.instance,
-  }) {
-    _visitIncrementOrDecrement(node, contextType: contextType);
-  }
-
-  @override
-  void visitPrefixDecrement(
-    covariant PrefixDecrementImpl node, {
-    TypeImpl contextType = UnknownInferredType.instance,
-  }) {
-    _visitIncrementOrDecrement(node, contextType: contextType);
   }
 
   @override
@@ -4230,19 +4565,11 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       inferenceLogWriter?.exitExpression(node);
       return;
     }
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
     inferenceLogWriter?.exitExpression(node);
-  }
-
-  @override
-  void visitPrefixIncrement(
-    covariant PrefixIncrementImpl node, {
-    TypeImpl contextType = UnknownInferredType.instance,
-  }) {
-    _visitIncrementOrDecrement(node, contextType: contextType);
   }
 
   @override
@@ -4266,11 +4593,17 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         node.metadata.accept2(this);
 
         if (primaryConstructorDeclaration != null) {
-          flowAnalysis.bodyOrInitializer_enter(node, element!.formalParameters);
+          var enterOffset = (node.colon ?? node.thisKeyword).offset;
+          flowAnalysis.bodyOrInitializer_enter(
+            node,
+            element!.formalParameters,
+            offset: enterOffset,
+          );
           flowAnalysis.executableDeclaration_enter(
             node,
             element.formalParameters,
             isClosure: false,
+            offset: enterOffset,
           );
         }
 
@@ -4278,8 +4611,12 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         node.body.resolve(this, returnType is DynamicType ? null : returnType);
 
         if (primaryConstructorDeclaration != null) {
-          flowAnalysis.executableDeclaration_exit(node.body, false);
-          flowAnalysis.bodyOrInitializer_exit();
+          flowAnalysis.executableDeclaration_exit(
+            node.body,
+            false,
+            offset: node.body.flowEndOffset,
+          );
+          node.body.flowAnalysisLog = flowAnalysis.bodyOrInitializer_exit();
         }
         nullSafetyDeadCodeVerifier.flowEnd(node);
       });
@@ -4331,8 +4668,94 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   @override
-  void visitPropertyExtraction(
-    covariant PropertyExtractionImpl node, {
+  void visitReceiverIndexExpression(
+    covariant ReceiverIndexExpressionImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+
+    if (isDotShorthand(node)) {
+      pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
+    }
+
+    checkUnreachableNode(node);
+    analyzeExpression(
+      node.receiver,
+      SharedTypeSchemaView(UnknownInferredType.instance),
+      continueNullShorting: true,
+    );
+    node.receiver = popRewrite()!;
+
+    var receiverDoesNotComplete =
+        node.receiver is! ExtensionOverrideImpl &&
+        identical(
+          typeSystem.resolveToBound(node.receiver.typeOrThrow),
+          NeverTypeImpl.instance,
+        );
+    if (node.question case var question? when !receiverDoesNotComplete) {
+      _startNullAwareAccess(node.receiver, offset: question.offset);
+      nullSafetyDeadCodeVerifier.visitNode(node.index);
+    }
+
+    var resolution = _propertyElementResolver.resolveReceiverIndexExpression(
+      node,
+    );
+    node.resolution = resolution;
+
+    analyzeExpression(
+      node.index,
+      SharedTypeSchemaView(
+        resolution?.indexContextType ?? UnknownInferredType.instance,
+      ),
+    );
+    node.index = popRewrite()!;
+    var whyNotPromoted = flowAnalysis.flow?.whyNotPromoted(
+      flowAnalysis.getExpressionInfo(node.index),
+    );
+    var readElement = switch (resolution) {
+      MethodIndexReadResolutionImpl(:var element) => element,
+      InvalidIndexReadResolutionImpl(
+        recovery: MethodIndexReadResolutionImpl(:var element),
+      ) =>
+        element,
+      _ => null,
+    };
+    checkIndexExpressionIndex(
+      node.index,
+      readElement: readElement,
+      writeElement: null,
+      whyNotPromoted: whyNotPromoted,
+    );
+
+    node.recordStaticType(
+      resolution?.type ?? NeverTypeImpl.instance,
+      resolver: this,
+    );
+    var replacement = insertGenericFunctionInstantiation(
+      node,
+      contextType: contextType,
+    );
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
+    nullSafetyDeadCodeVerifier.verifyReceiverIndexExpression(node);
+
+    if (isDotShorthand(node)) {
+      popDotShorthandContext();
+    }
+
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  @override
+  void visitReceiverMethodInvocation(
+    covariant ReceiverMethodInvocationImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    _resolveDirectNamedFunctionInvocation(node, contextType: contextType);
+  }
+
+  @override
+  void visitReceiverPropertyExtraction(
+    covariant ReceiverPropertyExtractionImpl node, {
     TypeImpl contextType = UnknownInferredType.instance,
   }) {
     inferenceLogWriter?.enterExpression(node, contextType);
@@ -4346,12 +4769,12 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     node.receiver = popRewrite()!;
 
     if (node.operator.type == TokenType.QUESTION_PERIOD) {
-      _startNullAwareAccess(node.receiver);
-      nullSafetyDeadCodeVerifier.visitNullAwareAccess(node, node.propertyName);
+      _startNullAwareAccess(node.receiver, offset: node.operator.offset);
+      nullSafetyDeadCodeVerifier.visitNullAwareAccess(node, node.name);
     }
 
     var (:expressionInfo, :resolution, :type) = _propertyElementResolver
-        .resolvePropertyExtraction(node);
+        .resolveReceiverPropertyExtraction(node);
     node.resolution = resolution;
     node.recordStaticType(type, resolver: this);
     flowAnalysis.storeExpressionInfo(node, expressionInfo);
@@ -4360,7 +4783,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node,
       contextType: contextType,
     );
-    _insertImplicitCallReference(replacement, contextType: contextType);
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
     if (node.operator.type == TokenType.QUESTION_PERIOD) {
       nullSafetyDeadCodeVerifier.verifyNullAwareAccess(
         node,
@@ -4462,7 +4885,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     checkUnreachableNode(node);
     node.visitChildren2(this);
     typeAnalyzer.visitRethrowExpression(node as RethrowExpressionImpl);
-    flowAnalysis.flow?.handleExit();
+    flowAnalysis.flow?.handleExit(offset: node.end);
     inferenceLogWriter?.exitExpression(node);
   }
 
@@ -4483,7 +4906,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     }
 
     bodyContext?.addReturnExpression(expression);
-    flowAnalysis.flow?.handleReturn();
+    flowAnalysis.flow?.handleReturn(offset: node.semicolon.offset);
     inferenceLogWriter?.exitStatement(node);
   }
 
@@ -4511,7 +4934,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }) {
     inferenceLogWriter?.enterExpression(node, contextType);
     _simpleIdentifierResolver.resolve(node, contextType: contextType);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
@@ -4628,6 +5051,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node.expression2,
       node.cases.length,
       SharedTypeSchemaView(contextType),
+      scrutineeEndOffset: node.rightParenthesis.offset,
     ).type.unwrapTypeView<TypeImpl>();
     node.recordStaticType(staticType, resolver: this);
     popRewrite();
@@ -4642,7 +5066,12 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     checkUnreachableNode(node);
 
     var previousExhaustiveness = legacySwitchExhaustiveness;
-    analyzeSwitchStatement(node, node.expression2, node.memberGroups.length);
+    analyzeSwitchStatement(
+      node,
+      node.expression2,
+      node.memberGroups.length,
+      scrutineeEndOffset: node.rightParenthesis.offset,
+    );
     // Stack: (Expression)
     popRewrite();
     // Stack: ()
@@ -4671,7 +5100,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     checkUnreachableNode(node);
     node.visitChildren2(this);
     typeAnalyzer.visitThisExpression(node as ThisExpressionImpl);
-    _insertImplicitCallReference(node, contextType: contextType);
+    _insertImplicitCallTearOff(node, contextType: contextType);
     inferenceLogWriter?.exitExpression(node);
   }
 
@@ -4709,17 +5138,27 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       node.recoveryTypeParameters?.accept2(this);
       node.recoveryFormalParameters?.accept2(this);
 
-      flowAnalysis.bodyOrInitializer_enter(node, element.formalParameters);
+      var enterOffset = node.body.offset;
+      flowAnalysis.bodyOrInitializer_enter(
+        node,
+        element.formalParameters,
+        offset: enterOffset,
+      );
       flowAnalysis.executableDeclaration_enter(
         node,
         element.formalParameters,
         isClosure: false,
+        offset: enterOffset,
       );
 
       node.body.resolve(this, returnType is DynamicType ? null : returnType);
 
       checkForBodyMayCompleteNormally(body: node.body, errorNode: node.name);
-      flowAnalysis.executableDeclaration_exit(node.body, false);
+      flowAnalysis.executableDeclaration_exit(
+        node.body,
+        false,
+        offset: node.body.flowEndOffset,
+      );
       flowAnalysis.bodyOrInitializer_exit();
       nullSafetyDeadCodeVerifier.flowEnd(node);
     });
@@ -4747,7 +5186,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     }
 
     if (catchClauses.isNotEmpty) {
-      flow.tryCatchStatement_bodyBegin();
+      flow.tryCatchStatement_bodyBegin(offset: node.tryKeyword.offset);
     }
     body.accept2(this);
     nullSafetyDeadCodeVerifier.flowEnd(node.body);
@@ -4766,22 +5205,26 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
               as PromotableElementImpl?,
           catchClause.stackTraceParameter?.declaredFragment?.element
               as PromotableElementImpl?,
+          offset: catchClause.body.offset,
         );
         catchClause.accept2(this);
         flow.tryCatchStatement_catchEnd();
         nullSafetyDeadCodeVerifier.flowEnd(catchClause.body);
       }
 
-      flow.tryCatchStatement_end();
+      flow.tryCatchStatement_end(
+        offset: node.finallyKeyword?.offset ?? node.end,
+      );
     }
     nullSafetyDeadCodeVerifier.tryStatementExit(node);
 
     if (finallyBlock != null) {
       flow.tryFinallyStatement_finallyBegin(
         catchClauses.isNotEmpty ? node : body,
+        offset: node.finallyKeyword!.offset,
       );
       finallyBlock.accept2(this);
-      flow.tryFinallyStatement_end();
+      flow.tryFinallyStatement_end(offset: node.end);
     }
     inferenceLogWriter?.exitStatement(node);
   }
@@ -4825,10 +5268,42 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     inferenceLogWriter?.enterExpression(node, contextType);
     checkUnreachableNode(node);
     _unaryOperatorInvocationResolver.resolve(node, contextType: contextType);
-    _insertImplicitCallReference(
+    _insertImplicitCallTearOff(
       insertGenericFunctionInstantiation(node, contextType: contextType),
       contextType: contextType,
     );
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  @override
+  void visitUnqualifiedFunctionInvocation(
+    covariant UnqualifiedFunctionInvocationImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    _resolveDirectNamedFunctionInvocation(node, contextType: contextType);
+  }
+
+  @override
+  void visitUnqualifiedNameExpression(
+    covariant UnqualifiedNameExpressionImpl node, {
+    TypeImpl contextType = UnknownInferredType.instance,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+    checkUnreachableNode(node);
+    var result = _propertyElementResolver.resolveUnqualifiedNameExpression(
+      node,
+    );
+    var resolution = result.resolution;
+    node.resolution = resolution;
+    if (result.expressionInfo case var expressionInfo?) {
+      flowAnalysis.storeExpressionInfo(node, expressionInfo);
+    }
+    node.recordStaticType(resolution.type, resolver: this);
+    var replacement = insertGenericFunctionInstantiation(
+      node,
+      contextType: contextType,
+    );
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
     inferenceLogWriter?.exitExpression(node);
   }
 
@@ -4851,6 +5326,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         isFinal: parent.isFinal,
         isLate: parent.isLate,
         isImplicitlyTyped: declaredType == null,
+        offset: node.end,
       );
     }
 
@@ -4882,7 +5358,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
 
     ExpressionImpl condition = node.condition2;
 
-    flowAnalysis.flow?.whileStatement_conditionBegin(node);
+    flowAnalysis.flow?.whileStatement_conditionBegin(node, offset: node.offset);
     analyzeExpression(condition, SharedTypeSchemaView(typeProvider.boolType));
     condition = popRewrite()!;
     var whyNotPromoted = flowAnalysis.flow?.whyNotPromoted(
@@ -4897,9 +5373,10 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     flowAnalysis.flow?.whileStatement_bodyBegin(
       node,
       flowAnalysis.getExpressionInfo(condition),
+      offset: node.rightParenthesis.offset,
     );
     node.body.accept2(this);
-    flowAnalysis.flow?.whileStatement_end();
+    flowAnalysis.flow?.whileStatement_end(offset: node.end);
     nullSafetyDeadCodeVerifier.flowEnd(node.body);
     // TODO(brianwilkerson): If the loop can only be exited because the condition
     // is false, then propagateFalseState(condition);
@@ -4918,6 +5395,22 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     checkUnreachableNode(node);
     _yieldStatementResolver.resolve(node);
     inferenceLogWriter?.exitStatement(node);
+  }
+
+  /// Wraps a generic function value after inference has selected type arguments.
+  ImplicitFunctionInstantiationImpl wrapFunctionInstantiation(
+    ExpressionImpl operand,
+    List<TypeImpl> typeArgumentTypes,
+  ) {
+    var parent = operand.parent2;
+    var type = operand.typeOrThrow as FunctionTypeImpl;
+    var result = ImplicitFunctionInstantiationImpl(
+      operand: operand,
+      typeArgumentTypes: typeArgumentTypes,
+      useLegacyV1Projection: !isConstructorTearoffsEnabled,
+    )..setPseudoExpressionStaticType(type.instantiate(typeArgumentTypes));
+    replaceExpression(operand, result, parent: parent);
+    return result;
   }
 
   /// Check whether [errorNode] is an `onError` callback in a
@@ -5082,13 +5575,13 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   }
 
   /// If `expression` should be treated as `expression.call`, inserts an
-  /// [ImplicitCallReference] node which wraps [expression].
-  void _insertImplicitCallReference(
+  /// [ImplicitCallTearOff] node which wraps [expression].
+  void _insertImplicitCallTearOff(
     ExpressionImpl expression, {
     required TypeImpl contextType,
   }) {
     var parent = expression.parent2;
-    if (_shouldSkipImplicitCallReferenceDueToForm(expression, parent)) {
+    if (_shouldSkipImplicitCallTearOffDueToForm(expression, parent)) {
       return;
     }
     var staticType = expression.staticType;
@@ -5102,10 +5595,10 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     } else if (parent is AssignmentExpression2Impl) {
       var target = parent.target;
       var writeType = switch (target) {
-        CascadeIndexAssignmentTargetImpl(:var write) => write?.acceptedType,
-        IndexAssignmentTargetImpl(:var write) => write?.acceptedType,
         PropertyAssignmentTargetImpl(:var write) => write?.acceptedType,
+        IndexAssignmentTargetImpl(:var write) => write?.acceptedType,
         UnqualifiedNameAssignmentTargetImpl(:var write) => write?.acceptedType,
+        ImportPrefixedAssignmentTargetImpl(:var write) => write?.acceptedType,
         InvalidExpressionAssignmentTargetImpl() => null,
       };
       if (writeType == null) {
@@ -5123,7 +5616,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     // `expression` is to be treated as `expression.call`.
     context = typeSystem.flatten(context);
     var callMethodType = callMethod.type;
-    List<DartType> typeArgumentTypes;
+    List<TypeImpl> typeArgumentTypes;
     if (isConstructorTearoffsEnabled &&
         callMethodType.typeParameters.isNotEmpty &&
         context is FunctionTypeImpl) {
@@ -5142,22 +5635,160 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
         dataForTesting: inferenceHelper.dataForTesting,
         nodeForTesting: expression,
       );
-      if (typeArgumentTypes.isNotEmpty) {
-        callMethodType = callMethodType.instantiate(typeArgumentTypes);
-      }
     } else {
       typeArgumentTypes = [];
     }
 
-    var callReference = ImplicitCallReferenceImpl(
-      expression2: expression,
+    var tearOff = ImplicitCallTearOffImpl(
+      operand: expression,
       element: callMethod,
-      typeArguments: null,
-      typeArgumentTypes: typeArgumentTypes,
     );
-    replaceExpression(expression, callReference, parent: parent);
+    replaceExpression(expression, tearOff, parent: parent);
 
-    callReference.setPseudoExpressionStaticType(callMethodType);
+    tearOff.setPseudoExpressionStaticType(callMethodType);
+    if (typeArgumentTypes.isNotEmpty) {
+      wrapFunctionInstantiation(tearOff, typeArgumentTypes);
+    }
+  }
+
+  /// Whether [receiver] is in the receiver-method migration slice.
+  ///
+  /// Parentheses establish an expression boundary even when the expression
+  /// inside them requires resolution. The other cases are already canonical
+  /// V2 value-producing receiver forms.
+  bool _isSupportedReceiverMethodInvocationReceiver(ExpressionImpl receiver) =>
+      receiver is LiteralImpl ||
+      receiver is ParenthesizedExpressionImpl ||
+      receiver is ConstructorInvocationImpl ||
+      receiver is ReceiverIndexExpressionImpl ||
+      receiver is ReceiverPropertyExtractionImpl ||
+      receiver is FunctionInvocationImpl ||
+      receiver is ThisExpressionImpl;
+
+  void _resolveDirectNamedFunctionInvocation(
+    NamedFunctionInvocationImpl node, {
+    required TypeImpl contextType,
+  }) {
+    inferenceLogWriter?.enterExpression(node, contextType);
+    checkUnreachableNode(node);
+    node.typeArguments?.accept2(this);
+
+    var previousResolution = node.resolution;
+    var previousInvokeType = node.staticInvokeType;
+    InvocationTarget? target = switch (previousResolution) {
+      ExecutableInvocationResolutionImpl(:var element) =>
+        InvocationTargetExecutableElement(element),
+      FunctionCallInvocationResolutionImpl(:var invokeType) =>
+        InvocationTargetFunctionTypedExpression(invokeType),
+      InvalidInvocationResolutionImpl(
+        recovery: ExecutableInvocationResolutionImpl(:var element),
+      ) =>
+        InvocationTargetExecutableElement(element),
+      InvalidInvocationResolutionImpl(
+        recovery: FunctionCallInvocationResolutionImpl(:var invokeType),
+      ) =>
+        InvocationTargetFunctionTypedExpression(invokeType),
+      _ => null,
+    };
+
+    var whyNotPromotedArguments =
+        <Map<SharedTypeView, NonPromotionReason> Function()>[];
+    var inferredType =
+        NamedFunctionInvocationInferrer(
+              resolver: this,
+              node: node,
+              argumentList: node.argumentList,
+              whyNotPromotedArguments: whyNotPromotedArguments,
+              contextType: contextType,
+              target: target,
+            ).resolveInvocation()
+            as TypeImpl;
+
+    node.resolution = switch (previousResolution) {
+      ExecutableInvocationResolutionImpl(:var element) =>
+        ExecutableInvocationResolutionImpl(
+          element: element,
+          invokeType: node.staticInvokeType as FunctionTypeImpl,
+          type: inferredType,
+        ),
+      FunctionCallInvocationResolutionImpl() =>
+        FunctionCallInvocationResolutionImpl(
+          invokeType: node.staticInvokeType as FunctionTypeImpl,
+          type: inferredType,
+        ),
+      _ => previousResolution,
+    };
+    if (target == null) {
+      node.staticInvokeType = previousInvokeType;
+    }
+    node.recordStaticType(
+      node.resolution?.type ?? node.typeOrThrow,
+      resolver: this,
+    );
+
+    var replacement = insertGenericFunctionInstantiation(
+      node,
+      contextType: contextType,
+    );
+    checkForArgumentTypesNotAssignableInList(
+      node.argumentList,
+      whyNotPromotedArguments,
+    );
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
+    inferenceLogWriter?.exitExpression(node);
+  }
+
+  /// Resolves the context shared by every canonical dot-shorthand head.
+  ///
+  /// The surrounding context is preserved separately from the normalized
+  /// interface type used for static namespace lookup. Operation-specific
+  /// resolvers consume this result instead of repeating context normalization.
+  DotShorthandContextResolutionImpl _resolveDotShorthandContext() {
+    var contextType = getDotShorthandContext().unwrapTypeSchemaView<TypeImpl>();
+    var lookupType = typeSystem.futureOrBase(contextType);
+    if (lookupType is InterfaceTypeImpl &&
+        lookupType.element.isAccessibleIn(definingLibrary)) {
+      return ValidDotShorthandContextResolutionImpl(
+        contextType: contextType,
+        lookupType: lookupType,
+      );
+    }
+    return InvalidDotShorthandContextResolutionImpl(
+      contextType: contextType is UnknownInferredType ? null : contextType,
+    );
+  }
+
+  void _resolveDotShorthandNameExpression(
+    DotShorthandNameExpressionImpl node,
+    TypeImpl contextType, {
+    bool cacheContext = true,
+  }) {
+    // If [isDotShorthand] is set, cache the context type for resolution.
+    var hasDotShorthandContext = cacheContext && isDotShorthand(node);
+    if (hasDotShorthandContext) {
+      pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
+    }
+
+    checkUnreachableNode(node);
+    var shorthandContext = _resolveDotShorthandContext();
+    node.shorthandContext = shorthandContext;
+    var resolution = _propertyElementResolver.resolveDotShorthand(
+      node,
+      contextType: contextType,
+      shorthandContext: shorthandContext,
+    );
+    node.resolution = resolution;
+    node.recordStaticType(resolution.type, resolver: this);
+
+    var replacement = insertGenericFunctionInstantiation(
+      node,
+      contextType: contextType,
+    );
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
+
+    if (hasDotShorthandContext) {
+      popDotShorthandContext();
+    }
   }
 
   void _resolvePropertyAccessRhs(
@@ -5166,7 +5797,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     PrefixedIdentifierImpl? originalNode,
   }) {
     if (node.isNullAware) {
-      _startNullAwareAccess(node.target2);
+      _startNullAwareAccess(node.target2, offset: node.operator.offset);
       nullSafetyDeadCodeVerifier.visitNode(node.propertyName);
     }
 
@@ -5186,8 +5817,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
     nullSafetyDeadCodeVerifier.verifyPropertyAccess(node);
   }
 
-  /// Common logic for resolving dot shorthands property accesses and
-  /// [_resolvePropertyAccessRhs].
+  /// Common logic for resolving the V1 property-access representations.
   void _resolvePropertyAccessRhs_common(
     PropertyElementResolverResult resolverResult,
     ExpressionImpl node,
@@ -5215,21 +5845,6 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       type = InvalidTypeImpl.instance;
     }
 
-    if (!isConstructorTearoffsEnabled) {
-      // Only perform a generic function instantiation on a [PrefixedIdentifier]
-      // in pre-constructor-tearoffs code. In constructor-tearoffs-enabled code,
-      // generic function instantiation is performed at assignability check
-      // sites.
-      // TODO(srawlins): Switch all resolution to use the latter method, in a
-      // breaking change release.
-      type = inferenceHelper.inferTearOff(
-        node,
-        propertyName,
-        type,
-        contextType: contextType,
-      );
-    }
-
     propertyName.setPseudoExpressionStaticType(type);
     node.recordStaticType(type, resolver: this);
     var replacement = insertGenericFunctionInstantiation(
@@ -5237,10 +5852,190 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       contextType: contextType,
     );
 
-    _insertImplicitCallReference(replacement, contextType: contextType);
+    _insertImplicitCallTearOff(replacement, contextType: contextType);
   }
 
-  bool _shouldSkipImplicitCallReferenceDueToForm(
+  CascadeMethodInvocationImpl _rewriteCascadeMethodInvocation(
+    MethodInvocationImpl node,
+  ) {
+    var resultType = node.typeOrThrow;
+    var invokeType = node.staticInvokeType;
+    var element = node.methodName.element;
+
+    ValidInvocationResolutionImpl? validResolution;
+    if (invokeType is FunctionTypeImpl) {
+      validResolution = switch (element) {
+        InternalExecutableElement() => ExecutableInvocationResolutionImpl(
+          element: element,
+          invokeType: invokeType,
+          type: resultType,
+        ),
+        _ => FunctionCallInvocationResolutionImpl(
+          invokeType: invokeType,
+          type: resultType,
+        ),
+      };
+    }
+
+    InvocationResolutionImpl? resolution;
+    if (resultType is NeverTypeImpl &&
+        resultType.nullabilitySuffix == NullabilitySuffix.none) {
+      resolution = null;
+    } else if (resultType is InvalidTypeImpl || invokeType is InvalidTypeImpl) {
+      resolution = InvalidInvocationResolutionImpl(
+        candidates: [?element],
+        recovery: validResolution,
+        type: resultType,
+      );
+    } else if (validResolution != null) {
+      resolution = validResolution;
+    } else if (node.methodName.name == MethodElement.CALL_METHOD_NAME &&
+        typeSystem
+            .resolveToBound(_activeCascadeExpression!.target2.typeOrThrow)
+            .isDartCoreFunction) {
+      resolution = FunctionInterfaceInvocationResolutionImpl(type: resultType);
+    } else {
+      resolution = DynamicInvocationResolutionImpl(type: resultType);
+    }
+
+    var invocation = CascadeMethodInvocationImpl(
+      name: node.methodName.token,
+      typeArguments: node.typeArguments,
+      argumentList: node.argumentList,
+    );
+    invocation
+      ..resolution = resolution
+      ..staticInvokeType = invokeType
+      ..typeArgumentTypes = node.typeArgumentTypes
+      ..setPseudoExpressionStaticType(resultType);
+    replaceExpression(node, invocation);
+    flowAnalysis.transferTestData(node, invocation);
+    return invocation;
+  }
+
+  DotShorthandMethodInvocationImpl _rewriteDotShorthandMethodInvocation(
+    DotShorthandInvocationImpl node,
+    DotShorthandContextResolutionImpl shorthandContext,
+  ) {
+    var resultType = node.typeOrThrow;
+    var invokeType = node.staticInvokeType;
+    var element = node.memberName.element;
+    var candidateElement = node.memberName.writeOrReadElement2;
+
+    ValidInvocationResolutionImpl? recovery;
+    if (invokeType is FunctionTypeImpl) {
+      recovery = switch (element) {
+        InternalExecutableElement() => ExecutableInvocationResolutionImpl(
+          element: element,
+          invokeType: invokeType,
+          type: resultType,
+        ),
+        _ => FunctionCallInvocationResolutionImpl(
+          invokeType: invokeType,
+          type: resultType,
+        ),
+      };
+    }
+
+    InvocationResolutionImpl resolution;
+    if (candidateElement is MultiplyDefinedElement) {
+      resolution = InvalidInvocationResolutionImpl(
+        candidates: [candidateElement],
+        recovery: recovery,
+        type: resultType,
+      );
+    } else if (resultType is InvalidTypeImpl || invokeType is InvalidTypeImpl) {
+      resolution = InvalidInvocationResolutionImpl(
+        candidates: [?candidateElement],
+        recovery: recovery,
+        type: resultType,
+      );
+    } else if (recovery != null) {
+      resolution = recovery;
+    } else if (invokeType != null && invokeType.isDartCoreFunction) {
+      resolution = FunctionInterfaceInvocationResolutionImpl(type: resultType);
+    } else {
+      resolution = DynamicInvocationResolutionImpl(type: resultType);
+    }
+
+    var invocation = DotShorthandMethodInvocationImpl(
+      period: node.period,
+      name: node.memberName.token,
+      typeArguments: node.typeArguments,
+      argumentList: node.argumentList,
+    );
+    invocation
+      ..isDotShorthand = node.isDotShorthand
+      ..shorthandContext = shorthandContext
+      ..resolution = resolution
+      ..staticInvokeType = invokeType
+      ..typeArgumentTypes = node.typeArgumentTypes
+      ..setPseudoExpressionStaticType(resultType);
+    replaceExpression(node, invocation);
+    flowAnalysis.transferExpressionInfo(node, invocation);
+    flowAnalysis.transferTestData(node, invocation);
+    inferenceHelper.transferTestData(node, invocation);
+    return invocation;
+  }
+
+  ImportPrefixedFunctionInvocationImpl _rewriteImportPrefixedFunctionInvocation(
+    MethodInvocationImpl node,
+    PrefixElement prefixElement,
+  ) {
+    var target = node.target2 as SimpleIdentifierImpl;
+    var invocation = ImportPrefixedFunctionInvocationImpl(
+      importPrefix: ImportPrefixReferenceImpl(
+        name: target.token,
+        period: node.operator!,
+      )..element = prefixElement,
+      name: node.methodName.token,
+      typeArguments: node.typeArguments,
+      argumentList: node.argumentList,
+    );
+    _transferNamedFunctionInvocationResolution(node, invocation);
+    replaceExpression(node, invocation);
+    flowAnalysis.transferExpressionInfo(node, invocation);
+    flowAnalysis.transferTestData(node, invocation);
+    inferenceHelper.transferTestData(node, invocation);
+    return invocation;
+  }
+
+  ReceiverMethodInvocationImpl _rewriteReceiverMethodInvocation(
+    MethodInvocationImpl node,
+    ExpressionImpl receiver,
+  ) {
+    var invocation = ReceiverMethodInvocationImpl(
+      receiver: receiver,
+      operator: node.operator!,
+      name: node.methodName.token,
+      typeArguments: node.typeArguments,
+      argumentList: node.argumentList,
+    );
+    _transferReceiverMethodInvocationResolution(node, invocation);
+    replaceExpression(node, invocation);
+    flowAnalysis.transferExpressionInfo(node, invocation);
+    flowAnalysis.transferTestData(node, invocation);
+    inferenceHelper.transferTestData(node, invocation);
+    return invocation;
+  }
+
+  UnqualifiedFunctionInvocationImpl _rewriteUnqualifiedFunctionInvocation(
+    MethodInvocationImpl node,
+  ) {
+    var invocation = UnqualifiedFunctionInvocationImpl(
+      name: node.methodName.token,
+      typeArguments: node.typeArguments,
+      argumentList: node.argumentList,
+    );
+    _transferNamedFunctionInvocationResolution(node, invocation);
+    replaceExpression(node, invocation);
+    flowAnalysis.transferExpressionInfo(node, invocation);
+    flowAnalysis.transferTestData(node, invocation);
+    inferenceHelper.transferTestData(node, invocation);
+    return invocation;
+  }
+
+  bool _shouldSkipImplicitCallTearOffDueToForm(
     Expression expression,
     AstNode? parent,
   ) {
@@ -5273,7 +6068,7 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
   ///
   /// Note: there is no corresponding "stop" method. Null shorting will be
   /// automatically stopped by [TypeAnalyzer.analyzeExpression].
-  void _startNullAwareAccess(ExpressionImpl? target) {
+  void _startNullAwareAccess(ExpressionImpl? target, {required int offset}) {
     var flow = flowAnalysis.flow;
     if (flow != null) {
       switch (target) {
@@ -5298,9 +6093,89 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
               null,
               flowAnalysis.getExpressionInfo(expression),
               SharedTypeView(expression.staticType ?? typeProvider.dynamicType),
+              offset: offset,
             ),
           );
       }
+    }
+  }
+
+  void _transferNamedFunctionInvocationResolution(
+    MethodInvocationImpl source,
+    NamedFunctionInvocationImpl destination,
+  ) {
+    var resultType = source.typeOrThrow;
+    var invokeType = source.staticInvokeType;
+    var element = source.methodName.element;
+    if (element == null) {
+      var scopeElement = source.methodName.scopeLookupResult?.getter;
+      if (scopeElement is InternalExecutableElement) {
+        element = scopeElement;
+      }
+    }
+    var candidateElement = source.methodName.writeOrReadElement2;
+
+    ValidInvocationResolutionImpl? recovery;
+    if (invokeType is FunctionTypeImpl) {
+      recovery = switch (element) {
+        InternalExecutableElement() => ExecutableInvocationResolutionImpl(
+          element: element,
+          invokeType: invokeType,
+          type: resultType,
+        ),
+        _ => FunctionCallInvocationResolutionImpl(
+          invokeType: invokeType,
+          type: resultType,
+        ),
+      };
+    }
+
+    InvocationResolutionImpl resolution;
+    if (candidateElement is MultiplyDefinedElement) {
+      resolution = InvalidInvocationResolutionImpl(
+        candidates: [candidateElement],
+        recovery: recovery,
+        type: resultType,
+      );
+    } else {
+      resolution = switch ((resultType, invokeType, recovery)) {
+        (InvalidTypeImpl(), _, _) ||
+        (_, InvalidTypeImpl(), _) => InvalidInvocationResolutionImpl(
+          candidates: [?candidateElement],
+          recovery: recovery,
+          type: resultType,
+        ),
+        (_, _, var recovery?) => recovery,
+        _ => DynamicInvocationResolutionImpl(type: resultType),
+      };
+    }
+
+    destination
+      ..resolution = resolution
+      ..staticInvokeType = invokeType
+      ..typeArgumentTypes = source.typeArgumentTypes
+      ..setPseudoExpressionStaticType(resultType);
+  }
+
+  void _transferReceiverMethodInvocationResolution(
+    MethodInvocationImpl source,
+    ReceiverMethodInvocationImpl destination,
+  ) {
+    var receiverType = typeSystem.resolveToBound(
+      destination.receiver.typeOrThrow,
+    );
+    var hasNoInvocation =
+        (receiverType is NeverType &&
+            receiverType.nullabilitySuffix == NullabilitySuffix.none) ||
+        (source.isNullAware && typeSystem.isNull(receiverType));
+    if (hasNoInvocation) {
+      destination
+        ..resolution = null
+        ..staticInvokeType = source.staticInvokeType
+        ..typeArgumentTypes = source.typeArgumentTypes
+        ..setPseudoExpressionStaticType(source.typeOrThrow);
+    } else {
+      _transferNamedFunctionInvocationResolution(source, destination);
     }
   }
 
@@ -5324,36 +6199,13 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       );
       defaultValue = popRewrite()!;
 
-      if (node.isOfLocalFunction2) {
-        fragment.constantInitializer2 = defaultValue;
-      }
+      // Resolution can replace the parsed expression with a canonical V2
+      // expression. Keep the element model on that resolved expression so
+      // constant evaluation and other element consumers don't observe the
+      // detached parser node.
+      fragment.constantInitializer2 = defaultValue;
+      fragment.element.resetConstantInitializer();
     }
-  }
-
-  void _visitIncrementOrDecrement(
-    IncrementOrDecrementExpressionImpl node, {
-    TypeImpl contextType = UnknownInferredType.instance,
-  }) {
-    inferenceLogWriter?.enterExpression(node, contextType);
-
-    // If [isDotShorthand] is set, cache the context type for resolution.
-    var hasDotShorthandContext = isDotShorthand(node);
-    if (hasDotShorthandContext) {
-      pushDotShorthandContext(node, SharedTypeSchemaView(contextType));
-    }
-
-    checkUnreachableNode(node);
-    _incrementOrDecrementResolver.resolve(node);
-    _insertImplicitCallReference(
-      insertGenericFunctionInstantiation(node, contextType: contextType),
-      contextType: contextType,
-    );
-
-    if (hasDotShorthandContext) {
-      popDotShorthandContext();
-    }
-
-    inferenceLogWriter?.exitExpression(node);
   }
 
   void _withEnclosingExecutableElement(
@@ -5582,8 +6434,8 @@ class ResolverVisitor extends ThrowingAstVisitor2<void>
       }
     } else if (nameNode is MethodInvocation) {
       name = nameNode.methodName.name;
-    } else if (nameNode is FunctionExpressionInvocation) {
-      var function = nameNode.function2;
+    } else if (nameNode is CallInvocation) {
+      var function = nameNode.receiver;
       if (function is SimpleIdentifier) {
         name = function.name;
       }
@@ -5722,6 +6574,8 @@ class SwitchExhaustiveness {
   static Element? _referencedElement(Expression expression) {
     if (expression is ParenthesizedExpression) {
       return _referencedElement(expression.expression2);
+    } else if (expression is NameExpression) {
+      return expression.resolution.elementOrRecovery;
     } else if (expression is PrefixedIdentifier) {
       return expression.element;
     } else if (expression is PropertyAccess) {
@@ -5960,5 +6814,31 @@ class _WhyNotPromotedVisitor
       length: property.name!.length,
       url: NonPromotionDocumentationLink.fieldPromotionUnavailable.url,
     );
+  }
+}
+
+extension FlowEndAnonymousMethodBodyImpl on AnonymousMethodBodyImpl {
+  int get flowEndOffset {
+    switch (this) {
+      case AnonymousBlockBodyImpl(:var block):
+        return block.rightBracket.offset;
+      case AnonymousExpressionBodyImpl(:var expression2):
+        return expression2.end;
+    }
+  }
+}
+
+extension FlowEndFunctionBodyImpl on FunctionBodyImpl {
+  int get flowEndOffset {
+    switch (this) {
+      case BlockFunctionBodyImpl(:var block):
+        return block.rightBracket.offset;
+      case EmptyFunctionBodyImpl(:var semicolon):
+        return semicolon.offset;
+      case ExpressionFunctionBodyImpl(:var expression2):
+        return expression2.end;
+      case NativeFunctionBodyImpl(:var semicolon):
+        return semicolon.offset;
+    }
   }
 }

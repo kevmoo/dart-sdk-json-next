@@ -210,11 +210,11 @@ CompilationUnit
                 fieldName(v1): SimpleIdentifier
                   token: <empty> <synthetic>
                 equals: = <synthetic>
-                expression2: PropertyExtraction
+                expression2: ReceiverPropertyExtraction
                   receiver: ThisExpression
                     thisKeyword: this
                   operator: .
-                  propertyName: <empty> <synthetic>
+                  name: <empty> <synthetic>
                 expression(v1): PropertyAccess
                   target: ThisExpression
                     thisKeyword: this

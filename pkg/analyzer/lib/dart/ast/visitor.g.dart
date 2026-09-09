@@ -349,6 +349,9 @@ class GeneralizingAstVisitor<R> implements AstVisitor<R> {
   R? visitFunctionExpressionInvocation(FunctionExpressionInvocation node) =>
       visitInvocationExpression(node);
 
+  @experimental
+  R? visitFunctionInvocation(FunctionInvocation node) => visitExpression(node);
+
   @override
   R? visitFunctionReference(FunctionReference node) =>
       visitCommentReferableExpression(node);
@@ -397,11 +400,14 @@ class GeneralizingAstVisitor<R> implements AstVisitor<R> {
   R? visitImportPrefixReference(ImportPrefixReference node) => visitNode(node);
 
   @experimental
-  R? visitIncrementOrDecrementExpression(IncrementOrDecrementExpression node) =>
-      visitExpression(node);
+  R? visitIndexAssignmentTarget(IndexAssignmentTarget node) =>
+      visitAssignmentTarget(node);
 
   @override
   R? visitIndexExpression(IndexExpression node) => visitExpression(node);
+
+  @experimental
+  R? visitIndexExpression2(IndexExpression2 node) => visitExpression(node);
 
   @override
   R? visitInstanceCreationExpression(InstanceCreationExpression node) =>
@@ -482,6 +488,10 @@ class GeneralizingAstVisitor<R> implements AstVisitor<R> {
 
   @override
   R? visitNamedArgument(NamedArgument node) => visitNode(node);
+
+  @experimental
+  R? visitNamedFunctionInvocation(NamedFunctionInvocation node) =>
+      visitFunctionInvocation(node);
 
   @override
   R? visitNamedType(NamedType node) => visitTypeAnnotation(node);
@@ -576,6 +586,10 @@ class GeneralizingAstVisitor<R> implements AstVisitor<R> {
   @override
   R? visitPropertyAccess(PropertyAccess node) =>
       visitCommentReferableExpression(node);
+
+  @experimental
+  R? visitPropertyAssignmentTarget(PropertyAssignmentTarget node) =>
+      visitAssignmentTarget(node);
 
   @override
   R? visitRecordLiteral(RecordLiteral node) => visitLiteral(node);
@@ -2023,6 +2037,13 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
     return null;
   }
 
+  @experimental
+  @override
+  R? visitCallInvocation(CallInvocation node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
   @override
   R? visitCascadeExpression(CascadeExpression node) {
     node.visitChildren2(this);
@@ -2039,6 +2060,29 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
   @experimental
   @override
   R? visitCascadeIndexExpression(CascadeIndexExpression node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitCascadeMethodInvocation(CascadeMethodInvocation node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitCascadePropertyAssignmentTarget(
+    CascadePropertyAssignmentTarget node,
+  ) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitCascadePropertyExtraction(CascadePropertyExtraction node) {
     node.visitChildren2(this);
     return null;
   }
@@ -2228,8 +2272,31 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
     return null;
   }
 
+  @experimental
+  @override
+  R? visitDotShorthandConstructorInvocation2(
+    DotShorthandConstructorInvocation2 node,
+  ) {
+    node.visitChildren2(this);
+    return null;
+  }
+
   @override
   R? visitDotShorthandInvocation(DotShorthandInvocation node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitDotShorthandMethodInvocation(DotShorthandMethodInvocation node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitDotShorthandNameExpression(DotShorthandNameExpression node) {
     node.visitChildren2(this);
     return null;
   }
@@ -2432,8 +2499,9 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
     return null;
   }
 
+  @experimental
   @override
-  R? visitFunctionExpressionInvocation(FunctionExpressionInvocation node) {
+  R? visitFunctionInstantiation(FunctionInstantiation node) {
     node.visitChildren2(this);
     return null;
   }
@@ -2527,8 +2595,45 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
     return null;
   }
 
+  @experimental
+  @override
+  R? visitImplicitCallTearOff(ImplicitCallTearOff node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitImplicitFunctionInstantiation(ImplicitFunctionInstantiation node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
   @override
   R? visitImportDirective(ImportDirective node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitImportPrefixedAssignmentTarget(ImportPrefixedAssignmentTarget node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitImportPrefixedFunctionInvocation(
+    ImportPrefixedFunctionInvocation node,
+  ) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitImportPrefixedNameExpression(ImportPrefixedNameExpression node) {
     node.visitChildren2(this);
     return null;
   }
@@ -2541,20 +2646,13 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
-  R? visitIndexAssignmentTarget(IndexAssignmentTarget node) {
+  R? visitIncrementOrDecrementExpression(IncrementOrDecrementExpression node) {
     node.visitChildren2(this);
     return null;
   }
 
   @override
   R? visitIndexExpression(IndexExpression node) {
-    node.visitChildren2(this);
-    return null;
-  }
-
-  @experimental
-  @override
-  R? visitIndexExpression2(IndexExpression2 node) {
     node.visitChildren2(this);
     return null;
   }
@@ -2840,36 +2938,8 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
     return null;
   }
 
-  @experimental
-  @override
-  R? visitPostfixDecrement(PostfixDecrement node) {
-    node.visitChildren2(this);
-    return null;
-  }
-
-  @experimental
-  @override
-  R? visitPostfixIncrement(PostfixIncrement node) {
-    node.visitChildren2(this);
-    return null;
-  }
-
-  @experimental
-  @override
-  R? visitPrefixDecrement(PrefixDecrement node) {
-    node.visitChildren2(this);
-    return null;
-  }
-
   @override
   R? visitPrefixedIdentifier(PrefixedIdentifier node) {
-    node.visitChildren2(this);
-    return null;
-  }
-
-  @experimental
-  @override
-  R? visitPrefixIncrement(PrefixIncrement node) {
     node.visitChildren2(this);
     return null;
   }
@@ -2900,14 +2970,37 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
-  R? visitPropertyAssignmentTarget(PropertyAssignmentTarget node) {
+  R? visitReceiverIndexAssignmentTarget(ReceiverIndexAssignmentTarget node) {
     node.visitChildren2(this);
     return null;
   }
 
   @experimental
   @override
-  R? visitPropertyExtraction(PropertyExtraction node) {
+  R? visitReceiverIndexExpression(ReceiverIndexExpression node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitReceiverMethodInvocation(ReceiverMethodInvocation node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitReceiverPropertyAssignmentTarget(
+    ReceiverPropertyAssignmentTarget node,
+  ) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitReceiverPropertyExtraction(ReceiverPropertyExtraction node) {
     node.visitChildren2(this);
     return null;
   }
@@ -3169,9 +3262,23 @@ class RecursiveAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
+  R? visitUnqualifiedFunctionInvocation(UnqualifiedFunctionInvocation node) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
   R? visitUnqualifiedNameAssignmentTarget(
     UnqualifiedNameAssignmentTarget node,
   ) {
+    node.visitChildren2(this);
+    return null;
+  }
+
+  @experimental
+  @override
+  R? visitUnqualifiedNameExpression(UnqualifiedNameExpression node) {
     node.visitChildren2(this);
     return null;
   }
@@ -3879,6 +3986,10 @@ class SimpleAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitBreakStatement(BreakStatement node) => null;
 
+  @experimental
+  @override
+  R? visitCallInvocation(CallInvocation node) => null;
+
   @override
   R? visitCascadeExpression(CascadeExpression node) => null;
 
@@ -3890,6 +4001,20 @@ class SimpleAstVisitor2<R> implements AstVisitor2<R> {
   @experimental
   @override
   R? visitCascadeIndexExpression(CascadeIndexExpression node) => null;
+
+  @experimental
+  @override
+  R? visitCascadeMethodInvocation(CascadeMethodInvocation node) => null;
+
+  @experimental
+  @override
+  R? visitCascadePropertyAssignmentTarget(
+    CascadePropertyAssignmentTarget node,
+  ) => null;
+
+  @experimental
+  @override
+  R? visitCascadePropertyExtraction(CascadePropertyExtraction node) => null;
 
   @experimental
   @override
@@ -3989,8 +4114,23 @@ class SimpleAstVisitor2<R> implements AstVisitor2<R> {
     DotShorthandConstructorInvocation node,
   ) => null;
 
+  @experimental
+  @override
+  R? visitDotShorthandConstructorInvocation2(
+    DotShorthandConstructorInvocation2 node,
+  ) => null;
+
   @override
   R? visitDotShorthandInvocation(DotShorthandInvocation node) => null;
+
+  @experimental
+  @override
+  R? visitDotShorthandMethodInvocation(DotShorthandMethodInvocation node) =>
+      null;
+
+  @experimental
+  @override
+  R? visitDotShorthandNameExpression(DotShorthandNameExpression node) => null;
 
   @override
   R? visitDotShorthandPropertyAccess(DotShorthandPropertyAccess node) => null;
@@ -4093,9 +4233,9 @@ class SimpleAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitFunctionExpression(FunctionExpression node) => null;
 
+  @experimental
   @override
-  R? visitFunctionExpressionInvocation(FunctionExpressionInvocation node) =>
-      null;
+  R? visitFunctionInstantiation(FunctionInstantiation node) => null;
 
   @override
   R? visitFunctionReference(FunctionReference node) => null;
@@ -4144,22 +4284,44 @@ class SimpleAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitImplicitCallReference(ImplicitCallReference node) => null;
 
+  @experimental
+  @override
+  R? visitImplicitCallTearOff(ImplicitCallTearOff node) => null;
+
+  @experimental
+  @override
+  R? visitImplicitFunctionInstantiation(ImplicitFunctionInstantiation node) =>
+      null;
+
   @override
   R? visitImportDirective(ImportDirective node) => null;
+
+  @experimental
+  @override
+  R? visitImportPrefixedAssignmentTarget(ImportPrefixedAssignmentTarget node) =>
+      null;
+
+  @experimental
+  @override
+  R? visitImportPrefixedFunctionInvocation(
+    ImportPrefixedFunctionInvocation node,
+  ) => null;
+
+  @experimental
+  @override
+  R? visitImportPrefixedNameExpression(ImportPrefixedNameExpression node) =>
+      null;
 
   @override
   R? visitImportPrefixReference(ImportPrefixReference node) => null;
 
   @experimental
   @override
-  R? visitIndexAssignmentTarget(IndexAssignmentTarget node) => null;
+  R? visitIncrementOrDecrementExpression(IncrementOrDecrementExpression node) =>
+      null;
 
   @override
   R? visitIndexExpression(IndexExpression node) => null;
-
-  @experimental
-  @override
-  R? visitIndexExpression2(IndexExpression2 node) => null;
 
   @override
   R? visitIntegerLiteral(IntegerLiteral node) => null;
@@ -4307,24 +4469,8 @@ class SimpleAstVisitor2<R> implements AstVisitor2<R> {
     PatternVariableDeclarationStatement node,
   ) => null;
 
-  @experimental
-  @override
-  R? visitPostfixDecrement(PostfixDecrement node) => null;
-
-  @experimental
-  @override
-  R? visitPostfixIncrement(PostfixIncrement node) => null;
-
-  @experimental
-  @override
-  R? visitPrefixDecrement(PrefixDecrement node) => null;
-
   @override
   R? visitPrefixedIdentifier(PrefixedIdentifier node) => null;
-
-  @experimental
-  @override
-  R? visitPrefixIncrement(PrefixIncrement node) => null;
 
   @override
   R? visitPrimaryConstructorBody(PrimaryConstructorBody node) => null;
@@ -4341,11 +4487,26 @@ class SimpleAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
-  R? visitPropertyAssignmentTarget(PropertyAssignmentTarget node) => null;
+  R? visitReceiverIndexAssignmentTarget(ReceiverIndexAssignmentTarget node) =>
+      null;
 
   @experimental
   @override
-  R? visitPropertyExtraction(PropertyExtraction node) => null;
+  R? visitReceiverIndexExpression(ReceiverIndexExpression node) => null;
+
+  @experimental
+  @override
+  R? visitReceiverMethodInvocation(ReceiverMethodInvocation node) => null;
+
+  @experimental
+  @override
+  R? visitReceiverPropertyAssignmentTarget(
+    ReceiverPropertyAssignmentTarget node,
+  ) => null;
+
+  @experimental
+  @override
+  R? visitReceiverPropertyExtraction(ReceiverPropertyExtraction node) => null;
 
   @override
   R? visitRecordLiteral(RecordLiteral node) => null;
@@ -4482,9 +4643,18 @@ class SimpleAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
+  R? visitUnqualifiedFunctionInvocation(UnqualifiedFunctionInvocation node) =>
+      null;
+
+  @experimental
+  @override
   R? visitUnqualifiedNameAssignmentTarget(
     UnqualifiedNameAssignmentTarget node,
   ) => null;
+
+  @experimental
+  @override
+  R? visitUnqualifiedNameExpression(UnqualifiedNameExpression node) => null;
 
   @override
   R? visitVariableDeclaration(VariableDeclaration node) => null;
@@ -5189,6 +5359,10 @@ class ThrowingAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitBreakStatement(BreakStatement node) => _throw(node);
 
+  @experimental
+  @override
+  R? visitCallInvocation(CallInvocation node) => _throw(node);
+
   @override
   R? visitCascadeExpression(CascadeExpression node) => _throw(node);
 
@@ -5200,6 +5374,21 @@ class ThrowingAstVisitor2<R> implements AstVisitor2<R> {
   @experimental
   @override
   R? visitCascadeIndexExpression(CascadeIndexExpression node) => _throw(node);
+
+  @experimental
+  @override
+  R? visitCascadeMethodInvocation(CascadeMethodInvocation node) => _throw(node);
+
+  @experimental
+  @override
+  R? visitCascadePropertyAssignmentTarget(
+    CascadePropertyAssignmentTarget node,
+  ) => _throw(node);
+
+  @experimental
+  @override
+  R? visitCascadePropertyExtraction(CascadePropertyExtraction node) =>
+      _throw(node);
 
   @experimental
   @override
@@ -5302,8 +5491,24 @@ class ThrowingAstVisitor2<R> implements AstVisitor2<R> {
     DotShorthandConstructorInvocation node,
   ) => _throw(node);
 
+  @experimental
+  @override
+  R? visitDotShorthandConstructorInvocation2(
+    DotShorthandConstructorInvocation2 node,
+  ) => _throw(node);
+
   @override
   R? visitDotShorthandInvocation(DotShorthandInvocation node) => _throw(node);
+
+  @experimental
+  @override
+  R? visitDotShorthandMethodInvocation(DotShorthandMethodInvocation node) =>
+      _throw(node);
+
+  @experimental
+  @override
+  R? visitDotShorthandNameExpression(DotShorthandNameExpression node) =>
+      _throw(node);
 
   @override
   R? visitDotShorthandPropertyAccess(DotShorthandPropertyAccess node) =>
@@ -5411,9 +5616,9 @@ class ThrowingAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitFunctionExpression(FunctionExpression node) => _throw(node);
 
+  @experimental
   @override
-  R? visitFunctionExpressionInvocation(FunctionExpressionInvocation node) =>
-      _throw(node);
+  R? visitFunctionInstantiation(FunctionInstantiation node) => _throw(node);
 
   @override
   R? visitFunctionReference(FunctionReference node) => _throw(node);
@@ -5462,22 +5667,44 @@ class ThrowingAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitImplicitCallReference(ImplicitCallReference node) => _throw(node);
 
+  @experimental
+  @override
+  R? visitImplicitCallTearOff(ImplicitCallTearOff node) => _throw(node);
+
+  @experimental
+  @override
+  R? visitImplicitFunctionInstantiation(ImplicitFunctionInstantiation node) =>
+      _throw(node);
+
   @override
   R? visitImportDirective(ImportDirective node) => _throw(node);
+
+  @experimental
+  @override
+  R? visitImportPrefixedAssignmentTarget(ImportPrefixedAssignmentTarget node) =>
+      _throw(node);
+
+  @experimental
+  @override
+  R? visitImportPrefixedFunctionInvocation(
+    ImportPrefixedFunctionInvocation node,
+  ) => _throw(node);
+
+  @experimental
+  @override
+  R? visitImportPrefixedNameExpression(ImportPrefixedNameExpression node) =>
+      _throw(node);
 
   @override
   R? visitImportPrefixReference(ImportPrefixReference node) => _throw(node);
 
   @experimental
   @override
-  R? visitIndexAssignmentTarget(IndexAssignmentTarget node) => _throw(node);
+  R? visitIncrementOrDecrementExpression(IncrementOrDecrementExpression node) =>
+      _throw(node);
 
   @override
   R? visitIndexExpression(IndexExpression node) => _throw(node);
-
-  @experimental
-  @override
-  R? visitIndexExpression2(IndexExpression2 node) => _throw(node);
 
   @override
   R? visitIntegerLiteral(IntegerLiteral node) => _throw(node);
@@ -5626,24 +5853,8 @@ class ThrowingAstVisitor2<R> implements AstVisitor2<R> {
     PatternVariableDeclarationStatement node,
   ) => _throw(node);
 
-  @experimental
-  @override
-  R? visitPostfixDecrement(PostfixDecrement node) => _throw(node);
-
-  @experimental
-  @override
-  R? visitPostfixIncrement(PostfixIncrement node) => _throw(node);
-
-  @experimental
-  @override
-  R? visitPrefixDecrement(PrefixDecrement node) => _throw(node);
-
   @override
   R? visitPrefixedIdentifier(PrefixedIdentifier node) => _throw(node);
-
-  @experimental
-  @override
-  R? visitPrefixIncrement(PrefixIncrement node) => _throw(node);
 
   @override
   R? visitPrimaryConstructorBody(PrimaryConstructorBody node) => _throw(node);
@@ -5660,12 +5871,28 @@ class ThrowingAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
-  R? visitPropertyAssignmentTarget(PropertyAssignmentTarget node) =>
+  R? visitReceiverIndexAssignmentTarget(ReceiverIndexAssignmentTarget node) =>
       _throw(node);
 
   @experimental
   @override
-  R? visitPropertyExtraction(PropertyExtraction node) => _throw(node);
+  R? visitReceiverIndexExpression(ReceiverIndexExpression node) => _throw(node);
+
+  @experimental
+  @override
+  R? visitReceiverMethodInvocation(ReceiverMethodInvocation node) =>
+      _throw(node);
+
+  @experimental
+  @override
+  R? visitReceiverPropertyAssignmentTarget(
+    ReceiverPropertyAssignmentTarget node,
+  ) => _throw(node);
+
+  @experimental
+  @override
+  R? visitReceiverPropertyExtraction(ReceiverPropertyExtraction node) =>
+      _throw(node);
 
   @override
   R? visitRecordLiteral(RecordLiteral node) => _throw(node);
@@ -5805,9 +6032,19 @@ class ThrowingAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
+  R? visitUnqualifiedFunctionInvocation(UnqualifiedFunctionInvocation node) =>
+      _throw(node);
+
+  @experimental
+  @override
   R? visitUnqualifiedNameAssignmentTarget(
     UnqualifiedNameAssignmentTarget node,
   ) => _throw(node);
+
+  @experimental
+  @override
+  R? visitUnqualifiedNameExpression(UnqualifiedNameExpression node) =>
+      _throw(node);
 
   @override
   R? visitVariableDeclaration(VariableDeclaration node) => _throw(node);
@@ -7511,6 +7748,15 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
     return result;
   }
 
+  @experimental
+  @override
+  T? visitCallInvocation(CallInvocation node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitCallInvocation(node);
+    stopwatch.stop();
+    return result;
+  }
+
   @override
   T? visitCascadeExpression(CascadeExpression node) {
     stopwatch.start();
@@ -7533,6 +7779,35 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
   T? visitCascadeIndexExpression(CascadeIndexExpression node) {
     stopwatch.start();
     T? result = _baseVisitor.visitCascadeIndexExpression(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitCascadeMethodInvocation(CascadeMethodInvocation node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitCascadeMethodInvocation(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitCascadePropertyAssignmentTarget(
+    CascadePropertyAssignmentTarget node,
+  ) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitCascadePropertyAssignmentTarget(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitCascadePropertyExtraction(CascadePropertyExtraction node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitCascadePropertyExtraction(node);
     stopwatch.stop();
     return result;
   }
@@ -7780,10 +8055,39 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
     return result;
   }
 
+  @experimental
+  @override
+  T? visitDotShorthandConstructorInvocation2(
+    DotShorthandConstructorInvocation2 node,
+  ) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitDotShorthandConstructorInvocation2(node);
+    stopwatch.stop();
+    return result;
+  }
+
   @override
   T? visitDotShorthandInvocation(DotShorthandInvocation node) {
     stopwatch.start();
     T? result = _baseVisitor.visitDotShorthandInvocation(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitDotShorthandMethodInvocation(DotShorthandMethodInvocation node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitDotShorthandMethodInvocation(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitDotShorthandNameExpression(DotShorthandNameExpression node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitDotShorthandNameExpression(node);
     stopwatch.stop();
     return result;
   }
@@ -8052,10 +8356,11 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
     return result;
   }
 
+  @experimental
   @override
-  T? visitFunctionExpressionInvocation(FunctionExpressionInvocation node) {
+  T? visitFunctionInstantiation(FunctionInstantiation node) {
     stopwatch.start();
-    T? result = _baseVisitor.visitFunctionExpressionInvocation(node);
+    T? result = _baseVisitor.visitFunctionInstantiation(node);
     stopwatch.stop();
     return result;
   }
@@ -8177,10 +8482,57 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
     return result;
   }
 
+  @experimental
+  @override
+  T? visitImplicitCallTearOff(ImplicitCallTearOff node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitImplicitCallTearOff(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitImplicitFunctionInstantiation(ImplicitFunctionInstantiation node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitImplicitFunctionInstantiation(node);
+    stopwatch.stop();
+    return result;
+  }
+
   @override
   T? visitImportDirective(ImportDirective node) {
     stopwatch.start();
     T? result = _baseVisitor.visitImportDirective(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitImportPrefixedAssignmentTarget(ImportPrefixedAssignmentTarget node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitImportPrefixedAssignmentTarget(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitImportPrefixedFunctionInvocation(
+    ImportPrefixedFunctionInvocation node,
+  ) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitImportPrefixedFunctionInvocation(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitImportPrefixedNameExpression(ImportPrefixedNameExpression node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitImportPrefixedNameExpression(node);
     stopwatch.stop();
     return result;
   }
@@ -8195,9 +8547,9 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
 
   @experimental
   @override
-  T? visitIndexAssignmentTarget(IndexAssignmentTarget node) {
+  T? visitIncrementOrDecrementExpression(IncrementOrDecrementExpression node) {
     stopwatch.start();
-    T? result = _baseVisitor.visitIndexAssignmentTarget(node);
+    T? result = _baseVisitor.visitIncrementOrDecrementExpression(node);
     stopwatch.stop();
     return result;
   }
@@ -8206,15 +8558,6 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
   T? visitIndexExpression(IndexExpression node) {
     stopwatch.start();
     T? result = _baseVisitor.visitIndexExpression(node);
-    stopwatch.stop();
-    return result;
-  }
-
-  @experimental
-  @override
-  T? visitIndexExpression2(IndexExpression2 node) {
-    stopwatch.start();
-    T? result = _baseVisitor.visitIndexExpression2(node);
     stopwatch.stop();
     return result;
   }
@@ -8590,46 +8933,10 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
     return result;
   }
 
-  @experimental
-  @override
-  T? visitPostfixDecrement(PostfixDecrement node) {
-    stopwatch.start();
-    T? result = _baseVisitor.visitPostfixDecrement(node);
-    stopwatch.stop();
-    return result;
-  }
-
-  @experimental
-  @override
-  T? visitPostfixIncrement(PostfixIncrement node) {
-    stopwatch.start();
-    T? result = _baseVisitor.visitPostfixIncrement(node);
-    stopwatch.stop();
-    return result;
-  }
-
-  @experimental
-  @override
-  T? visitPrefixDecrement(PrefixDecrement node) {
-    stopwatch.start();
-    T? result = _baseVisitor.visitPrefixDecrement(node);
-    stopwatch.stop();
-    return result;
-  }
-
   @override
   T? visitPrefixedIdentifier(PrefixedIdentifier node) {
     stopwatch.start();
     T? result = _baseVisitor.visitPrefixedIdentifier(node);
-    stopwatch.stop();
-    return result;
-  }
-
-  @experimental
-  @override
-  T? visitPrefixIncrement(PrefixIncrement node) {
-    stopwatch.start();
-    T? result = _baseVisitor.visitPrefixIncrement(node);
     stopwatch.stop();
     return result;
   }
@@ -8668,18 +8975,47 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
 
   @experimental
   @override
-  T? visitPropertyAssignmentTarget(PropertyAssignmentTarget node) {
+  T? visitReceiverIndexAssignmentTarget(ReceiverIndexAssignmentTarget node) {
     stopwatch.start();
-    T? result = _baseVisitor.visitPropertyAssignmentTarget(node);
+    T? result = _baseVisitor.visitReceiverIndexAssignmentTarget(node);
     stopwatch.stop();
     return result;
   }
 
   @experimental
   @override
-  T? visitPropertyExtraction(PropertyExtraction node) {
+  T? visitReceiverIndexExpression(ReceiverIndexExpression node) {
     stopwatch.start();
-    T? result = _baseVisitor.visitPropertyExtraction(node);
+    T? result = _baseVisitor.visitReceiverIndexExpression(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitReceiverMethodInvocation(ReceiverMethodInvocation node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitReceiverMethodInvocation(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitReceiverPropertyAssignmentTarget(
+    ReceiverPropertyAssignmentTarget node,
+  ) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitReceiverPropertyAssignmentTarget(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitReceiverPropertyExtraction(ReceiverPropertyExtraction node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitReceiverPropertyExtraction(node);
     stopwatch.stop();
     return result;
   }
@@ -9023,11 +9359,29 @@ class TimedAstVisitor2<T> implements AstVisitor2<T> {
 
   @experimental
   @override
+  T? visitUnqualifiedFunctionInvocation(UnqualifiedFunctionInvocation node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitUnqualifiedFunctionInvocation(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
   T? visitUnqualifiedNameAssignmentTarget(
     UnqualifiedNameAssignmentTarget node,
   ) {
     stopwatch.start();
     T? result = _baseVisitor.visitUnqualifiedNameAssignmentTarget(node);
+    stopwatch.stop();
+    return result;
+  }
+
+  @experimental
+  @override
+  T? visitUnqualifiedNameExpression(UnqualifiedNameExpression node) {
+    stopwatch.start();
+    T? result = _baseVisitor.visitUnqualifiedNameExpression(node);
     stopwatch.stop();
     return result;
   }
@@ -9798,6 +10152,10 @@ class UnifyingAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitBreakStatement(BreakStatement node) => visitNode(node);
 
+  @experimental
+  @override
+  R? visitCallInvocation(CallInvocation node) => visitNode(node);
+
   @override
   R? visitCascadeExpression(CascadeExpression node) => visitNode(node);
 
@@ -9809,6 +10167,22 @@ class UnifyingAstVisitor2<R> implements AstVisitor2<R> {
   @experimental
   @override
   R? visitCascadeIndexExpression(CascadeIndexExpression node) =>
+      visitNode(node);
+
+  @experimental
+  @override
+  R? visitCascadeMethodInvocation(CascadeMethodInvocation node) =>
+      visitNode(node);
+
+  @experimental
+  @override
+  R? visitCascadePropertyAssignmentTarget(
+    CascadePropertyAssignmentTarget node,
+  ) => visitNode(node);
+
+  @experimental
+  @override
+  R? visitCascadePropertyExtraction(CascadePropertyExtraction node) =>
       visitNode(node);
 
   @experimental
@@ -9914,8 +10288,24 @@ class UnifyingAstVisitor2<R> implements AstVisitor2<R> {
     DotShorthandConstructorInvocation node,
   ) => visitNode(node);
 
+  @experimental
+  @override
+  R? visitDotShorthandConstructorInvocation2(
+    DotShorthandConstructorInvocation2 node,
+  ) => visitNode(node);
+
   @override
   R? visitDotShorthandInvocation(DotShorthandInvocation node) =>
+      visitNode(node);
+
+  @experimental
+  @override
+  R? visitDotShorthandMethodInvocation(DotShorthandMethodInvocation node) =>
+      visitNode(node);
+
+  @experimental
+  @override
+  R? visitDotShorthandNameExpression(DotShorthandNameExpression node) =>
       visitNode(node);
 
   @override
@@ -10028,9 +10418,9 @@ class UnifyingAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitFunctionExpression(FunctionExpression node) => visitNode(node);
 
+  @experimental
   @override
-  R? visitFunctionExpressionInvocation(FunctionExpressionInvocation node) =>
-      visitNode(node);
+  R? visitFunctionInstantiation(FunctionInstantiation node) => visitNode(node);
 
   @override
   R? visitFunctionReference(FunctionReference node) => visitNode(node);
@@ -10079,22 +10469,44 @@ class UnifyingAstVisitor2<R> implements AstVisitor2<R> {
   @override
   R? visitImplicitCallReference(ImplicitCallReference node) => visitNode(node);
 
+  @experimental
+  @override
+  R? visitImplicitCallTearOff(ImplicitCallTearOff node) => visitNode(node);
+
+  @experimental
+  @override
+  R? visitImplicitFunctionInstantiation(ImplicitFunctionInstantiation node) =>
+      visitNode(node);
+
   @override
   R? visitImportDirective(ImportDirective node) => visitNode(node);
+
+  @experimental
+  @override
+  R? visitImportPrefixedAssignmentTarget(ImportPrefixedAssignmentTarget node) =>
+      visitNode(node);
+
+  @experimental
+  @override
+  R? visitImportPrefixedFunctionInvocation(
+    ImportPrefixedFunctionInvocation node,
+  ) => visitNode(node);
+
+  @experimental
+  @override
+  R? visitImportPrefixedNameExpression(ImportPrefixedNameExpression node) =>
+      visitNode(node);
 
   @override
   R? visitImportPrefixReference(ImportPrefixReference node) => visitNode(node);
 
   @experimental
   @override
-  R? visitIndexAssignmentTarget(IndexAssignmentTarget node) => visitNode(node);
+  R? visitIncrementOrDecrementExpression(IncrementOrDecrementExpression node) =>
+      visitNode(node);
 
   @override
   R? visitIndexExpression(IndexExpression node) => visitNode(node);
-
-  @experimental
-  @override
-  R? visitIndexExpression2(IndexExpression2 node) => visitNode(node);
 
   @override
   R? visitIntegerLiteral(IntegerLiteral node) => visitNode(node);
@@ -10252,24 +10664,8 @@ class UnifyingAstVisitor2<R> implements AstVisitor2<R> {
     PatternVariableDeclarationStatement node,
   ) => visitNode(node);
 
-  @experimental
-  @override
-  R? visitPostfixDecrement(PostfixDecrement node) => visitNode(node);
-
-  @experimental
-  @override
-  R? visitPostfixIncrement(PostfixIncrement node) => visitNode(node);
-
-  @experimental
-  @override
-  R? visitPrefixDecrement(PrefixDecrement node) => visitNode(node);
-
   @override
   R? visitPrefixedIdentifier(PrefixedIdentifier node) => visitNode(node);
-
-  @experimental
-  @override
-  R? visitPrefixIncrement(PrefixIncrement node) => visitNode(node);
 
   @override
   R? visitPrimaryConstructorBody(PrimaryConstructorBody node) =>
@@ -10288,12 +10684,29 @@ class UnifyingAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
-  R? visitPropertyAssignmentTarget(PropertyAssignmentTarget node) =>
+  R? visitReceiverIndexAssignmentTarget(ReceiverIndexAssignmentTarget node) =>
       visitNode(node);
 
   @experimental
   @override
-  R? visitPropertyExtraction(PropertyExtraction node) => visitNode(node);
+  R? visitReceiverIndexExpression(ReceiverIndexExpression node) =>
+      visitNode(node);
+
+  @experimental
+  @override
+  R? visitReceiverMethodInvocation(ReceiverMethodInvocation node) =>
+      visitNode(node);
+
+  @experimental
+  @override
+  R? visitReceiverPropertyAssignmentTarget(
+    ReceiverPropertyAssignmentTarget node,
+  ) => visitNode(node);
+
+  @experimental
+  @override
+  R? visitReceiverPropertyExtraction(ReceiverPropertyExtraction node) =>
+      visitNode(node);
 
   @override
   R? visitRecordLiteral(RecordLiteral node) => visitNode(node);
@@ -10436,9 +10849,19 @@ class UnifyingAstVisitor2<R> implements AstVisitor2<R> {
 
   @experimental
   @override
+  R? visitUnqualifiedFunctionInvocation(UnqualifiedFunctionInvocation node) =>
+      visitNode(node);
+
+  @experimental
+  @override
   R? visitUnqualifiedNameAssignmentTarget(
     UnqualifiedNameAssignmentTarget node,
   ) => visitNode(node);
+
+  @experimental
+  @override
+  R? visitUnqualifiedNameExpression(UnqualifiedNameExpression node) =>
+      visitNode(node);
 
   @override
   R? visitVariableDeclaration(VariableDeclaration node) => visitNode(node);

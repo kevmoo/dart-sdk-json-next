@@ -40,8 +40,6 @@ import '../source/source_library_builder.dart';
 import '../source/stack_listener_impl.dart' show AsyncModifier;
 import '../type_inference/context_allocation_strategy.dart';
 import '../type_inference/inference_results.dart';
-import '../type_inference/inference_visitor_base.dart'
-    show InferenceVisitorBase;
 import '../type_inference/type_inference_engine.dart';
 import '../type_inference/type_inferrer.dart'
     show
@@ -520,7 +518,10 @@ class Resolver {
         ],
         internalThisVariable: internalThisVariable,
         contextAllocationStrategy:
-            InferenceVisitorBase.createContextAllocationStrategy(),
+            ContextAllocationStrategy.createContextAllocationStrategy(
+              isClosureContextLoweringEnabled:
+                  libraryBuilder.loader.isClosureContextLoweringEnabled,
+            ),
       );
     }
     context.performBacklog(result.annotations);
@@ -1038,7 +1039,10 @@ class Resolver {
           body: internalReturn,
           expressionEvaluationHelper: expressionEvaluationHelper,
           contextAllocationStrategy:
-              InferenceVisitorBase.createContextAllocationStrategy(),
+              ContextAllocationStrategy.createContextAllocationStrategy(
+                isClosureContextLoweringEnabled:
+                    libraryBuilder.loader.isClosureContextLoweringEnabled,
+              ),
           constructorContext: null,
         );
     ReturnStatement returnStatement =
@@ -1364,10 +1368,10 @@ class Resolver {
       //  along with the thisVariable in the ScopeProviderInfo object in the
       //  call below.
       ScopeProviderInfo? scopeProviderInfo;
-      if (internalThisVariable?.astVariable case var thisVariable?) {
+      if (internalThisVariable != null) {
         scopeProviderInfo = new ScopeProviderInfo(
           kind: ScopeProviderInfoKind.FunctionNodeWithThis,
-        )..thisVariable = thisVariable;
+        )..thisVariable = internalThisVariable.astVariable;
       }
       bodyBuilderContext.registerNoBodyConstructor(
         scopeProviderInfo: scopeProviderInfo,
@@ -1485,20 +1489,23 @@ class Resolver {
       }
     }
 
-    late List<InternalVariable>? parameters = [
+    late List<InternalFunctionParameter>? parameters = [
       for (FormalParameterBuilder formal in bodyBuilderContext.formals ?? [])
         formal.variable,
     ];
     ScopeProviderInfo? scopeProviderInfo;
     ContextAllocationStrategy contextAllocationStrategy =
-        InferenceVisitorBase.createContextAllocationStrategy();
+        ContextAllocationStrategy.createContextAllocationStrategy(
+          isClosureContextLoweringEnabled:
+              libraryBuilder.loader.isClosureContextLoweringEnabled,
+        );
     if (libraryBuilder.loader.isClosureContextLoweringEnabled) {
       scopeProviderInfo = contextAllocationStrategy
           .beginClosureContextAllocation(
             [
-              for (InternalVariable parameter in parameters)
+              for (InternalFunctionParameter parameter in parameters)
                 new VariableWithCaptureKind(
-                  parameter.astVariable,
+                  parameter.functionParameter,
                   context.typeInferrer.captureKindForVariable(parameter),
                 ),
             ],

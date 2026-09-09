@@ -141,7 +141,7 @@ mixin _DirectMethodEncodingMixin implements MethodEncoding {
 
   @override
   List<SourceNominalParameterBuilder>? get clonedAndDeclaredTypeParameters =>
-      _fragment.declaredTypeParameters?.builders;
+      _fragment.declaredTypeParameterBuilders;
 
   @override
   List<FormalParameterBuilder>? get formals => _fragment.declaredFormals;
@@ -199,7 +199,7 @@ mixin _DirectMethodEncodingMixin implements MethodEncoding {
       metadata: _fragment.metadata,
       annotationsFileUri: _fragment.fileUri,
     );
-    _fragment.declaredTypeParameters?.builders.buildOutlineExpressions(
+    _fragment.declaredTypeParameterBuilders.buildOutlineExpressions(
       classHierarchy: classHierarchy,
       libraryBuilder: libraryBuilder,
       bodyBuilderContext: bodyBuilderContext,
@@ -233,7 +233,7 @@ mixin _DirectMethodEncodingMixin implements MethodEncoding {
     buildTypeParametersAndFormals(
       libraryBuilder,
       function,
-      _fragment.declaredTypeParameters?.builders,
+      _fragment.declaredTypeParameterBuilders,
       _fragment.declaredFormals,
       classTypeParameters: classTypeParameters,
       supportsTypeParameters: true,
@@ -288,7 +288,7 @@ mixin _DirectMethodEncodingMixin implements MethodEncoding {
     TypeEnvironment typeEnvironment,
   ) {
     List<SourceNominalParameterBuilder>? typeParameters =
-        _fragment.declaredTypeParameters?.builders;
+        _fragment.declaredTypeParameterBuilders;
     if (typeParameters != null && typeParameters.isNotEmpty) {
       checkTypeParameterDependencies(problemReporting, typeParameters);
     }
@@ -307,7 +307,7 @@ mixin _DirectMethodEncodingMixin implements MethodEncoding {
   ) {
     sourceClassBuilder.checkVarianceInTypeParameters(
       typeEnvironment,
-      _fragment.declaredTypeParameters?.builders,
+      _fragment.declaredTypeParameterBuilders,
     );
     sourceClassBuilder.checkVarianceInFormals(
       typeEnvironment,
@@ -324,7 +324,7 @@ mixin _DirectMethodEncodingMixin implements MethodEncoding {
   @override
   int computeDefaultTypes(ComputeDefaultTypeContext context) {
     bool hasErrors = context.reportSimplicityIssuesForTypeParameters(
-      _fragment.declaredTypeParameters?.builders,
+      _fragment.declaredTypeParameterBuilders,
     );
     context.reportGenericFunctionTypesForFormals(_fragment.declaredFormals);
     if (_fragment.returnType is! OmittedTypeBuilder) {
@@ -336,7 +336,7 @@ mixin _DirectMethodEncodingMixin implements MethodEncoding {
       );
     }
     return context.computeDefaultTypesForVariables(
-      _fragment.declaredTypeParameters?.builders,
+      _fragment.declaredTypeParameterBuilders,
       inErrorRecovery: hasErrors,
     );
   }
@@ -463,7 +463,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
           _fragment.declaredTypeParameters != null
       ? [
           ...?_clonedDeclarationTypeParameters,
-          ...?_fragment.declaredTypeParameters?.builders,
+          ...?_fragment.declaredTypeParameterBuilders,
         ]
       : null;
 
@@ -529,7 +529,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
       annotationsFileUri: _fragment.fileUri,
     );
 
-    _fragment.declaredTypeParameters?.builders.buildOutlineExpressions(
+    _fragment.declaredTypeParameterBuilders.buildOutlineExpressions(
       classHierarchy: classHierarchy,
       libraryBuilder: libraryBuilder,
       bodyBuilderContext: bodyBuilderContext,
@@ -586,7 +586,8 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
       isAbstractOrExternal ? null : extern.createEmptyStatement(),
       typeParameters: typeParameters,
       positionalParameters: [
-        _thisFormal.build(libraryBuilder).astVariable as PositionalParameter,
+        _thisFormal.build(libraryBuilder).functionParameter
+            as PositionalParameter,
       ],
       asyncMarker: _fragment.asyncModifier.kind,
       fileOffset: _fragment.formalsOffset,
@@ -595,7 +596,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
     buildTypeParametersAndFormals(
       libraryBuilder,
       function,
-      _fragment.declaredTypeParameters?.builders,
+      _fragment.declaredTypeParameterBuilders,
       _fragment.declaredFormals,
       classTypeParameters: classTypeParameters,
       supportsTypeParameters: true,
@@ -658,7 +659,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
     TypeEnvironment typeEnvironment,
   ) {
     List<SourceNominalParameterBuilder>? typeParameters =
-        _fragment.declaredTypeParameters?.builders;
+        _fragment.declaredTypeParameterBuilders;
     if (typeParameters != null && typeParameters.isNotEmpty) {
       checkTypeParameterDependencies(problemReporting, typeParameters);
     }
@@ -678,7 +679,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
   ) {
     sourceClassBuilder.checkVarianceInTypeParameters(
       typeEnvironment,
-      _fragment.declaredTypeParameters?.builders,
+      _fragment.declaredTypeParameterBuilders,
     );
     sourceClassBuilder.checkVarianceInFormals(
       typeEnvironment,
@@ -695,7 +696,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
   @override
   int computeDefaultTypes(ComputeDefaultTypeContext context) {
     bool hasErrors = context.reportSimplicityIssuesForTypeParameters(
-      _fragment.declaredTypeParameters?.builders,
+      _fragment.declaredTypeParameterBuilders,
     );
     context.reportGenericFunctionTypesForFormals(_fragment.declaredFormals);
     if (_fragment.returnType is! OmittedTypeBuilder) {
@@ -715,7 +716,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
         //  required and unnecessary.
         // ignore: unnecessary_non_null_assertion
         ..._clonedDeclarationTypeParameters!,
-        ..._fragment.declaredTypeParameters!.builders,
+        ..._fragment.declaredTypeParameterBuilders!,
       ], inErrorRecovery: hasErrors);
     } else if (_clonedDeclarationTypeParameters != null) {
       return context.computeDefaultTypesForVariables(
@@ -724,7 +725,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
       );
     } else {
       return context.computeDefaultTypesForVariables(
-        _fragment.declaredTypeParameters?.builders,
+        _fragment.declaredTypeParameterBuilders,
         inErrorRecovery: hasErrors,
       );
     }
@@ -782,7 +783,7 @@ mixin _ExtensionInstanceMethodEncodingMixin implements MethodEncoding {
     return _extensionTearOffParameterMap?[_fragment
         .declaredFormals![index]
         .variable
-        .astVariable];
+        .functionParameter];
   }
 
   @override

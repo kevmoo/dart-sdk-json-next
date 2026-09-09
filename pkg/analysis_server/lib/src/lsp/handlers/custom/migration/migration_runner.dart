@@ -9,6 +9,7 @@ import 'package:analysis_server/src/lsp/error_or.dart';
 import 'package:analysis_server/src/lsp/handlers/custom/migration/migration_extensions.dart';
 import 'package:analysis_server/src/lsp/handlers/custom/migration/migration_registry.dart';
 import 'package:analysis_server/src/lsp/handlers/custom/migration/migration_summary_builder.dart';
+import 'package:analysis_server/src/lsp/progress.dart';
 import 'package:analysis_server/src/lsp/temporary_overlay_operation.dart';
 import 'package:analysis_server/src/services/correction/bulk_fix_processor.dart';
 import 'package:analysis_server/src/utilities/package_config.dart';
@@ -20,6 +21,7 @@ import 'package:analyzer/src/dart/analysis/driver_based_analysis_context.dart';
 import 'package:analyzer/src/util/file_paths.dart' as file_paths;
 import 'package:analyzer_plugin/protocol/protocol_common.dart';
 import 'package:analyzer_plugin/utilities/change_builder/change_builder_core.dart';
+import 'package:pub_semver/pub_semver.dart';
 
 /// The outcome of executing a package migration step.
 enum ExecutionOutcome {
@@ -42,8 +44,19 @@ class MigrationRunner({
   required AnalysisServer server,
   required final List<PubspecTarget> pubspecTargets,
   required final MigrationSummaryBuilder summaryBuilder,
+
+  /// The target SDK version to migrate toward in a multi-version migration.
+  ///
+  /// When `null`, the runner executes a single version step.
+  final Version? targetSdk,
+
+  /// The progress reporter used to emit stage updates to the client.
+  ProgressReporter? progressReporter,
 }) extends TemporaryOverlayOperation {
   final List<SourceFileEdit> _fileEdits = [];
+
+  final ProgressReporter _progressReporter =
+      progressReporter ?? ProgressReporter.noop;
 
   this : super(server);
 
@@ -62,9 +75,14 @@ class MigrationRunner({
   Future<ErrorOr<List<SourceFileEdit>>> computeEdits(
     List<MigrationStep> steps,
   ) async {
-    return await pauseSchedulerWithTemporaryOverlays(
-      () => _computeMigrationEdits(steps),
-    );
+    await _progressReporter.begin('Migrating package(s)');
+    try {
+      return await pauseSchedulerWithTemporaryOverlays(
+        () => _computeMigrationEdits(steps),
+      );
+    } finally {
+      await _progressReporter.end();
+    }
   }
 
   Future<void> _applyAndRecordEdits(ChangeBuilder builder) async {
@@ -108,7 +126,7 @@ class MigrationRunner({
     return true;
   }
 
-  /// Applies the pubspec SDK constraint bump edit.
+  /// Applies the pubspec SDK constraint bump edit to [builder].
   Future<void> _bumpPubspecConstraint(
     File pubspecFile,
     PubspecEdit versionBumpEdit,
@@ -131,20 +149,116 @@ class MigrationRunner({
 
     try {
       for (var pubspec in pubspecTargets) {
-        if (runPrepare || runBump) {
-          var prepareAndBumpOutcome = await _executePrepareAndBump(
-            pubspec: pubspec,
-            runPrepare: runPrepare,
-            runBump: runBump,
-          );
-          if (prepareAndBumpOutcome == ExecutionOutcome.exception) {
-            continue;
-          }
+        var packageSummary = summaryBuilder.forPackage(pubspec);
+
+        var pubspecFile = pubspec.file;
+        var initialVersion = minimumSdkConstraint(pubspecFile);
+        if (initialVersion == null) {
+          packageSummary.recordSkipped('Unknown SDK version.');
+          continue;
         }
 
-        if (runCleanup) {
-          var cleanupOutcome = await _executeCleanup(pubspec);
-          if (cleanupOutcome == ExecutionOutcome.exception) continue;
+        var normalizedInitialVersion = Version(
+          initialVersion.major,
+          initialVersion.minor,
+          0,
+        );
+        if (!knownSdkVersions.contains(normalizedInitialVersion)) {
+          packageSummary.recordSkipped(
+            'The package SDK version "$initialVersion" is not supported for '
+            'migration. It must be between ${knownSdkVersions.first} and '
+            '${knownSdkVersions.last}.',
+          );
+          continue;
+        }
+
+        if (targetSdk == null &&
+            (runPrepare || runBump) &&
+            normalizedInitialVersion == knownSdkVersions.last) {
+          packageSummary.recordSkipped(
+            'The package is already at the latest supported SDK version '
+            '(${knownSdkVersions.last}).',
+          );
+          continue;
+        }
+
+        if (targetSdk != null && _hasReachedTarget(initialVersion, targetSdk)) {
+          packageSummary.recordSkipped(
+            'Already at target SDK version $targetSdk.',
+          );
+          continue;
+        }
+
+        if (!runPrepare && !runBump && !runCleanup) {
+          continue;
+        }
+
+        var currentVersion = initialVersion;
+
+        // Perform sequential version bumps until the target SDK is reached.
+        while (!_hasReachedTarget(currentVersion, targetSdk)) {
+          VersionMigrationSummary? versionSummary;
+
+          if (runPrepare || runBump) {
+            var nextVersion = nextSdkVersion(currentVersion);
+            if (nextVersion == null) {
+              // This should be unreachable because `initialVersion` and
+              // `targetSdk` have already been verified to be in
+              // `knownSdkVersions`.
+              server.instrumentationService.logException(
+                StateError(
+                  'Unable to calculate the next SDK version after '
+                  '$currentVersion (target: $targetSdk).',
+                ),
+                StackTrace.current,
+              );
+              packageSummary.recordSkipped(
+                'Internal error: Unable to calculate next SDK version.',
+              );
+              break;
+            }
+
+            versionSummary = packageSummary.forVersion(
+              fromVersion: currentVersion,
+              toVersion: nextVersion,
+            );
+
+            var prepareAndBumpOutcome = await _executePrepareAndBump(
+              versionSummary: versionSummary,
+              pubspec: pubspec,
+              currentVersion: currentVersion,
+              targetVersion: nextVersion,
+              runPrepare: runPrepare,
+              runBump: runBump,
+            );
+            if (prepareAndBumpOutcome == ExecutionOutcome.exception) {
+              break;
+            }
+            if (runBump) {
+              currentVersion = nextVersion;
+            }
+          }
+
+          if (runCleanup) {
+            versionSummary ??= packageSummary.forVersion(
+              fromVersion: currentVersion,
+              toVersion: currentVersion,
+            );
+            var cleanupOutcome = await _executeCleanup(
+              versionSummary: versionSummary,
+              pubspec: pubspec,
+              targetVersion: currentVersion,
+            );
+            if (cleanupOutcome == ExecutionOutcome.exception) {
+              break;
+            }
+          }
+
+          // Single-step migrations (e.g. without --target-sdk, or single step
+          // operations like --step=prepare) only execute one iteration.
+          if (targetSdk == null) {
+            break;
+          }
         }
       }
     } finally {
@@ -166,30 +280,23 @@ class MigrationRunner({
   /// Applies the clean up edits to the temporary overlays and records the
   /// corresponding file edits. Returns [ExecutionOutcome.exception] if an
   /// error occurs.
-  Future<ExecutionOutcome> _executeCleanup(PubspecTarget pubspec) async {
-    var pubspecFile = pubspec.file;
-    var targetVersion = minimumSdkConstraint(pubspecFile);
-    if (targetVersion == null) {
-      summaryBuilder.recordStepFailure(
-        pubspec,
-        MigrationStep.Cleanup,
-        'Unknown SDK version.',
-      );
-      return ExecutionOutcome.success;
-    }
+  Future<ExecutionOutcome> _executeCleanup({
+    required VersionMigrationSummary versionSummary,
+    required PubspecTarget pubspec,
+    required Version targetVersion,
+  }) async {
+    _reportProgress('${pubspec.displayName}: $targetVersion (cleanup)');
+
     if (!cleanUpLintsRegistry.containsKey(targetVersion)) {
       return ExecutionOutcome.success;
     }
 
+    var pubspecFile = pubspec.file;
     // Retrieve the updated analysis context to ensure cleanup fixes are
     // computed against the newly applied overlays and bumped SDK constraint.
     var context = server.contextManager.getContextFor(pubspecFile.path);
     if (context == null) {
-      summaryBuilder.recordStepSkipped(
-        pubspec,
-        MigrationStep.Cleanup,
-        'context lost after pubspec update',
-      );
+      versionSummary.recordSkipped('Context lost after pubspec update.');
       return ExecutionOutcome.success;
     }
 
@@ -197,18 +304,16 @@ class MigrationRunner({
     var targetVersionChangeBuilder = await _createBuilder();
     // TODO(kallentu): Allow the user to choose which clean up fixes to apply.
     var cleanUpFixDetails = await _runMigrations(
+      versionSummary: versionSummary,
       context: context,
-      pubspec: pubspec,
       lintCodes: cleanUpLintsRegistry[targetVersion] ?? [],
       builder: targetVersionChangeBuilder,
-      step: MigrationStep.Cleanup,
     );
-
     if (cleanUpFixDetails == null) {
       return ExecutionOutcome.exception;
     }
 
-    summaryBuilder.recordCleanUpChanges(cleanUpFixDetails, pubspec);
+    versionSummary.recordCleanUpChanges(cleanUpFixDetails);
     await _applyAndRecordEdits(targetVersionChangeBuilder);
 
     return ExecutionOutcome.success;
@@ -220,41 +325,52 @@ class MigrationRunner({
   /// corresponding file edits. Returns [ExecutionOutcome.exception] if an
   /// error occurs.
   Future<ExecutionOutcome> _executePrepareAndBump({
+    required VersionMigrationSummary versionSummary,
     required PubspecTarget pubspec,
+    required Version currentVersion,
+    required Version targetVersion,
     required bool runPrepare,
     required bool runBump,
   }) async {
     var pubspecFile = pubspec.file;
     var context = server.contextManager.getContextFor(pubspecFile.path);
     if (context == null) {
-      summaryBuilder.recordPackageSkipped(pubspec);
+      versionSummary.recordSkipped(
+        'The package is not being analyzed. Add its directory to your '
+        'workspace.',
+      );
       return ExecutionOutcome.exception;
     }
 
-    var versionBumpEdit = computeVersionBumpEdit(pubspecFile);
+    var versionBumpEdit = computeEdit(pubspecFile, targetVersion);
     if (versionBumpEdit == null) {
       return ExecutionOutcome.exception;
     }
 
-    if (_shouldSkipDueToDependencies(context, pubspec, versionBumpEdit)) {
+    var incompatibleDeps = _getIncompatibleDependencies(
+      context,
+      pubspec,
+      targetVersion,
+    );
+    if (incompatibleDeps.isNotEmpty) {
+      versionSummary.recordIncompatibleDependencies(incompatibleDeps);
       return ExecutionOutcome.exception;
     }
 
     // Run preparatory fixes.
+    if (runPrepare) {
+      _reportProgress(
+        '${pubspec.displayName}: $currentVersion -> $targetVersion (prepare)',
+      );
+    }
     var builder = await _createBuilder();
-    // If we are preparing, we write the edits to the main builder.
-    // If we are bumping without preparing, we only check for edits without
-    // applying them, so we write them to a separate temporary builder to
-    // discard them.
-    var preparatoryStepBuilder = runPrepare ? builder : await _createBuilder();
     var lintCodes =
         preparatoryLintsRegistry[versionBumpEdit.targetVersion] ?? [];
     var preparatoryFixDetails = await _runMigrations(
+      versionSummary: versionSummary,
       context: context,
-      pubspec: pubspec,
       lintCodes: lintCodes,
-      builder: preparatoryStepBuilder,
-      step: MigrationStep.Prepare,
+      builder: builder,
     );
     if (preparatoryFixDetails == null) {
       return ExecutionOutcome.exception;
@@ -262,21 +378,18 @@ class MigrationRunner({
 
     // Prevent version bumps when the user needs to migrate their code.
     if (runBump && !runPrepare && preparatoryFixDetails.isNotEmpty) {
-      summaryBuilder.recordStepFailure(
-        pubspec,
-        MigrationStep.Bump,
+      versionSummary.recordFailure(
         'Package "${pubspec.displayName}" requires pre-bump fixes '
         'before the SDK constraint can be bumped.',
       );
       return ExecutionOutcome.exception;
     }
 
-    if (runPrepare) {
-      summaryBuilder.recordPreparatoryChanges(preparatoryFixDetails, pubspec);
-    }
-
     // Bump version constraint.
     if (runBump) {
+      _reportProgress(
+        '${pubspec.displayName}: $currentVersion -> $targetVersion (bump)',
+      );
       await _bumpPubspecConstraint(pubspecFile, versionBumpEdit, builder);
 
       var bumpSuccess = _bumpPackageConfig(
@@ -285,9 +398,7 @@ class MigrationRunner({
         versionBumpEdit,
       );
       if (!bumpSuccess) {
-        summaryBuilder.recordStepFailure(
-          pubspec,
-          MigrationStep.Bump,
+        versionSummary.recordFailure(
           'Failed to update .dart_tool/package_config.json for '
           '"${pubspec.displayName}". Try running "dart pub get" to update '
           'the package configuration, then re-run the migration.',
@@ -295,11 +406,14 @@ class MigrationRunner({
         return ExecutionOutcome.exception;
       }
 
-      summaryBuilder.recordBump(
-        pubspec.displayName,
-        versionBumpEdit.originalConstraint,
-        versionBumpEdit.replacement,
+      versionSummary.recordBump(
+        originalConstraint: versionBumpEdit.originalConstraint,
+        newConstraint: versionBumpEdit.newConstraint,
       );
+    }
+
+    if (runPrepare) {
+      versionSummary.recordPreparatoryChanges(preparatoryFixDetails);
     }
 
     await _applyAndRecordEdits(builder);
@@ -307,16 +421,47 @@ class MigrationRunner({
     return ExecutionOutcome.success;
   }
 
+  /// Returns a list of incompatible dependency package names if any
+  /// dependencies do not support [targetVersion].
+  List<String> _getIncompatibleDependencies(
+    DriverBasedAnalysisContext context,
+    PubspecTarget pubspec,
+    Version targetVersion,
+  ) {
+    var packageDependencies = context.contextRoot.workspace.packages.packages
+        .where(
+          (package) => package.rootFolder.path != pubspec.file.parent.path,
+        );
+    var incompatibleDeps = checkDependencyCompatibility(
+      packages: packageDependencies,
+      targetVersion: targetVersion,
+    );
+    if (incompatibleDeps.isNotEmpty) {
+      incompatibleDeps.sort();
+    }
+    return incompatibleDeps;
+  }
+
+  /// Returns `true` if [currentVersion] has reached or exceeded [targetSdk].
+  bool _hasReachedTarget(Version currentVersion, Version? targetSdk) {
+    if (targetSdk == null) return false;
+    return currentVersion >= Version(targetSdk.major, targetSdk.minor, 0);
+  }
+
+  /// Reports progress with the current stage [message].
+  void _reportProgress(String message) {
+    _progressReporter.report(message);
+  }
+
   /// Runs bulk fixes for the given [lintCodes] in the specified migration
   /// step.
   ///
   /// Returns the list of bulk fixes applied, or `null` if the step failed.
   Future<List<BulkFix>?> _runMigrations({
+    required VersionMigrationSummary versionSummary,
     required DriverBasedAnalysisContext context,
-    required PubspecTarget pubspec,
     required List<String> lintCodes,
     required ChangeBuilder builder,
-    required MigrationStep step,
   }) async {
     if (lintCodes.isEmpty) return const [];
 
@@ -324,12 +469,12 @@ class MigrationRunner({
       var workspace = DartChangeWorkspace([context.driver.currentSession]);
       // TODO(kallentu): Use an IterativeBulkFixProcessor to loop until code
       // stabilizes.
-      var processor = BulkFixProcessor(
+      var processor = BulkFixProcessor.withAdditionalLints(
         server.instrumentationService,
         workspace,
         byteStore: server.byteStore,
         builder: builder,
-        additionalEnabledCodes: lintCodes,
+        additionalLintCodes: lintCodes,
       );
 
       // TODO(kallentu): Check for and report unfixed preparatory step
@@ -338,31 +483,8 @@ class MigrationRunner({
 
       return processor.fixDetails;
     } catch (e) {
-      summaryBuilder.recordStepFailure(pubspec, step, 'Exception: $e');
+      versionSummary.recordFailure('Exception: $e');
       return null;
     }
-  }
-
-  /// Returns `true` if the migration should be skipped due to incompatible
-  /// dependencies.
-  bool _shouldSkipDueToDependencies(
-    DriverBasedAnalysisContext context,
-    PubspecTarget pubspec,
-    PubspecEdit versionBumpEdit,
-  ) {
-    var packageDependencies = context.contextRoot.workspace.packages.packages
-        .where(
-          (package) => package.rootFolder.path != pubspec.file.parent.path,
-        );
-    var incompatibleDeps = checkDependencyCompatibility(
-      packages: packageDependencies,
-      targetVersion: versionBumpEdit.targetVersion,
-    );
-    if (incompatibleDeps.isNotEmpty) {
-      incompatibleDeps.sort();
-      summaryBuilder.recordIncompatibleDependencies(pubspec, incompatibleDeps);
-      return true;
-    }
-    return false;
   }
 }

@@ -304,6 +304,28 @@ E
 ''');
   }
 
+  test_dotShorthand_propertyAccess_imported() async {
+    newFile('$testPackageLibPath/a.dart', r'''
+class A {
+  const A();
+  static const A field = A();
+}
+''');
+
+    var unitResult = await resolveTestCodeWithDiagnostics('''
+import 'a.dart';
+
+const A a = .field;
+''');
+    var result = _topLevelVar(unitResult, 'a');
+    assertDartObjectText(result, r'''
+A
+  constructorInvocation
+    constructor: package:test/a.dart::@class::A::@constructor::new
+  variable: <testLibrary>::@topLevelVariable::a
+''');
+  }
+
   test_enum_argument_methodInvocation() async {
     await resolveTestCodeWithDiagnostics('''
 enum E {
@@ -2685,6 +2707,44 @@ test() {
     await resolveTestCodeWithDiagnostics(r'''
 void _() {}
 const c = _;
+''');
+  }
+
+  test_visitImplicitFunctionInstantiation_constructor() async {
+    var unitResult = await resolveTestCodeWithDiagnostics(r'''
+class C<T> {
+  C(T value);
+}
+const C<int> Function(int) c = C.new;
+const same = identical(c, C<int>.new);
+''');
+    assertDartObjectText(_topLevelVar(unitResult, 'c'), r'''
+C<int> Function(int)
+  element: <testLibrary>::@class::C::@constructor::new
+  typeArguments
+    int
+  variable: <testLibrary>::@topLevelVariable::c
+''');
+    assertDartObjectText(_topLevelVar(unitResult, 'same'), r'''
+bool true
+  variable: <testLibrary>::@topLevelVariable::same
+''');
+  }
+
+  test_visitImplicitFunctionInstantiation_constructor_typeAlias() async {
+    var unitResult = await resolveTestCodeWithDiagnostics(r'''
+class C<T, U> {
+  C(T value);
+}
+typedef A<T> = C<T, String>;
+const C<int, String> Function(int) c = A.new;
+''');
+    assertDartObjectText(_topLevelVar(unitResult, 'c'), r'''
+C<int, String> Function(int)
+  element: <testLibrary>::@class::C::@constructor::new
+  typeArguments
+    int
+  variable: <testLibrary>::@topLevelVariable::c
 ''');
   }
 

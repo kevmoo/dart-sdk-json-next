@@ -16,6 +16,55 @@ main() {
 
 @reflectiveTest
 class CascadeExpressionResolutionTest extends PubPackageResolutionTest {
+  test_functionInterface_call_read() async {
+    var result = await resolveTestCode(r'''
+Function f(Function a) {
+  return a..call;
+}
+''');
+
+    var node = result.findNode.cascadePropertyExtraction('call;');
+    assertResolvedNodeText(node, r'''
+CascadePropertyExtraction
+  name: call
+  resolution: FunctionInterfaceCallTearOffResolution
+    type: Function
+  staticType: Function
+V1: PropertyAccess
+  operator: ..
+  propertyName: SimpleIdentifier
+    token: call
+    element: <null>
+    staticType: Function
+  staticType: Function
+''');
+  }
+
+  test_functionType_call_read_typeParameterBound() async {
+    var result = await resolveTestCode(r'''
+T f<T extends int Function(String)>(T a) {
+  return a..call;
+}
+''');
+
+    var node = result.findNode.cascadePropertyExtraction('call;');
+    assertResolvedNodeText(node, r'''
+CascadePropertyExtraction
+  name: call
+  resolution: FunctionCallTearOffResolution
+    type: T
+    associatedFunctionType: int Function(String)
+  staticType: T
+V1: PropertyAccess
+  operator: ..
+  propertyName: SimpleIdentifier
+    token: call
+    element: <null>
+    staticType: T
+  staticType: T
+''');
+  }
+
   test_indexSections_ast() async {
     var result = await resolveTestCodeWithDiagnostics(r'''
 class A {
@@ -31,7 +80,13 @@ void f(A a) {
     var node = result.findNode.singleCascadeExpression;
     assertResolvedNodeText(node, r'''
 CascadeExpression
-  target2: SimpleIdentifier
+  target2: UnqualifiedNameExpression
+    name: a
+    resolution: VariableReadResolution
+      element: <testLibrary>::@function::f::@formalParameter::a
+      type: A
+    staticType: A
+  target(v1): SimpleIdentifier
     token: a
     element: <testLibrary>::@function::f::@formalParameter::a
     staticType: A
@@ -223,11 +278,21 @@ test(C c) {
     // The null shorting for the index get `.._d?[0]` ends at the end of the
     // cascade section, therefore in the cascade section that follows, `..d_`
     // has static type `D?`.
-    var node = result.findNode.simple('_d?.g()');
+    var node = result.findNode.cascadePropertyExtraction('_d?.g()');
     assertResolvedNodeText(node, r'''
-SimpleIdentifier
-  token: _d
-  element: <testLibrary>::@class::C::@getter::_d
+CascadePropertyExtraction
+  name: _d
+  resolution: GetterInvocationResolution
+    element: <testLibrary>::@class::C::@getter::_d
+    invokeType: D? Function()
+    type: D?
+  staticType: D?
+V1: PropertyAccess
+  operator: ..
+  propertyName: SimpleIdentifier
+    token: _d
+    element: <testLibrary>::@class::C::@getter::_d
+    staticType: D?
   staticType: D?
 ''');
   }
@@ -252,9 +317,15 @@ test(C c, int? i) {
     // The null shorting for the index get `..d?[0]` ends at the end of the
     // cascade section, therefore in the cascade section that follows, `i` has
     // static type `int?`.
-    var node = result.findNode.simple('i!);');
+    var node = result.findNode.unqualifiedNameExpression('i!);');
     assertResolvedNodeText(node, r'''
-SimpleIdentifier
+UnqualifiedNameExpression
+  name: i
+  resolution: VariableReadResolution
+    element: <testLibrary>::@function::test::@formalParameter::i
+    type: int?
+  staticType: int?
+V1: SimpleIdentifier
   token: i
   element: <testLibrary>::@function::test::@formalParameter::i
   staticType: int?
@@ -280,9 +351,15 @@ test(C c, int? i) {
     // The null shorting for the index set `..d[0] ??= i!` ends at the end of
     // the cascade section, therefore in the cascade section that follows, `i`
     // has static type `int?`.
-    var node = result.findNode.simple('i!);');
+    var node = result.findNode.unqualifiedNameExpression('i!);');
     assertResolvedNodeText(node, r'''
-SimpleIdentifier
+UnqualifiedNameExpression
+  name: i
+  resolution: VariableReadResolution
+    element: <testLibrary>::@function::test::@formalParameter::i
+    type: int?
+  staticType: int?
+V1: SimpleIdentifier
   token: i
   element: <testLibrary>::@function::test::@formalParameter::i
   staticType: int?
@@ -308,11 +385,21 @@ test(C c) {
     // The null shorting for the method invocation `.._d?.f()` ends at the end
     // of the cascade section, therefore in the cascade section that follows,
     // `.._d` has static type `D?`.
-    var node = result.findNode.simple('_d?.g()');
+    var node = result.findNode.cascadePropertyExtraction('_d?.g()');
     assertResolvedNodeText(node, r'''
-SimpleIdentifier
-  token: _d
-  element: <testLibrary>::@class::C::@getter::_d
+CascadePropertyExtraction
+  name: _d
+  resolution: GetterInvocationResolution
+    element: <testLibrary>::@class::C::@getter::_d
+    invokeType: D? Function()
+    type: D?
+  staticType: D?
+V1: PropertyAccess
+  operator: ..
+  propertyName: SimpleIdentifier
+    token: _d
+    element: <testLibrary>::@class::C::@getter::_d
+    staticType: D?
   staticType: D?
 ''');
   }
@@ -335,9 +422,15 @@ test(C c, int? i) {
     // The null shorting for the method invocation `..d?.f(i!)` ends at the end
     // of the cascade section, therefore in the cascade section that follows,
     // `i` has static type `int?`.
-    var node = result.findNode.simple('i!);');
+    var node = result.findNode.unqualifiedNameExpression('i!);');
     assertResolvedNodeText(node, r'''
-SimpleIdentifier
+UnqualifiedNameExpression
+  name: i
+  resolution: VariableReadResolution
+    element: <testLibrary>::@function::test::@formalParameter::i
+    type: int?
+  staticType: int?
+V1: SimpleIdentifier
   token: i
   element: <testLibrary>::@function::test::@formalParameter::i
   staticType: int?
@@ -364,11 +457,21 @@ test(C c) {
     // The null shorting for the property get `.._d?.d` ends at the end of the
     // cascade section, therefore in the cascade section that follows, `..d_`
     // has static type `D?`.
-    var node = result.findNode.simple('_d?.g()');
+    var node = result.findNode.cascadePropertyExtraction('_d?.g()');
     assertResolvedNodeText(node, r'''
-SimpleIdentifier
-  token: _d
-  element: <testLibrary>::@class::C::@getter::_d
+CascadePropertyExtraction
+  name: _d
+  resolution: GetterInvocationResolution
+    element: <testLibrary>::@class::C::@getter::_d
+    invokeType: D? Function()
+    type: D?
+  staticType: D?
+V1: PropertyAccess
+  operator: ..
+  propertyName: SimpleIdentifier
+    token: _d
+    element: <testLibrary>::@class::C::@getter::_d
+    staticType: D?
   staticType: D?
 ''');
   }
@@ -393,9 +496,15 @@ test(C c, int? i) {
     // The null shorting for the property get `..d?.d` ends at the end of the
     // cascade section, therefore in the cascade section that follows, `i` has
     // static type `int?`.
-    var node = result.findNode.simple('i!);');
+    var node = result.findNode.unqualifiedNameExpression('i!);');
     assertResolvedNodeText(node, r'''
-SimpleIdentifier
+UnqualifiedNameExpression
+  name: i
+  resolution: VariableReadResolution
+    element: <testLibrary>::@function::test::@formalParameter::i
+    type: int?
+  staticType: int?
+V1: SimpleIdentifier
   token: i
   element: <testLibrary>::@function::test::@formalParameter::i
   staticType: int?
@@ -416,9 +525,15 @@ test(C c, int? i) {
     // The null shorting for the property set `..x ??= i!` ends at the end of
     // the cascade section, therefore in the cascade section that follows, `i`
     // has static type `int?`.
-    var node = result.findNode.simple('i!);');
+    var node = result.findNode.unqualifiedNameExpression('i!);');
     assertResolvedNodeText(node, r'''
-SimpleIdentifier
+UnqualifiedNameExpression
+  name: i
+  resolution: VariableReadResolution
+    element: <testLibrary>::@function::test::@formalParameter::i
+    type: int?
+  staticType: int?
+V1: SimpleIdentifier
   token: i
   element: <testLibrary>::@function::test::@formalParameter::i
   staticType: int?

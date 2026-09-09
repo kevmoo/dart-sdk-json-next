@@ -34,6 +34,15 @@ static bool PotentialDartdevCommand(const char* script_uri) {
   // This should be kept in sync with the commands in
   // `pkg/dartdev/lib/dartdev.dart`.
   return (
+      (strcmp(script_uri, "-e") == 0) || (strcmp(script_uri, "--eval") == 0) ||
+      (strncmp(script_uri, "-e=", 3) == 0) ||
+      (strncmp(script_uri, "--eval=", 7) == 0) ||
+      (strcmp(script_uri, "-P") == 0) ||
+      (strcmp(script_uri, "--package-constraint") == 0) ||
+      (strncmp(script_uri, "-P=", 3) == 0) ||
+      (strncmp(script_uri, "--package-constraint=", 21) == 0) ||
+      (strcmp(script_uri, "--offline") == 0) ||
+      (strncmp(script_uri, "--offline=", 10) == 0) ||
       (strcmp(script_uri, "analyze") == 0) ||
       (strcmp(script_uri, "compilation-server") == 0) ||
       (strcmp(script_uri, "build") == 0) ||
@@ -87,11 +96,14 @@ CB_OPTIONS_LIST(CB_OPTION_DEFINITION)
 #undef CB_OPTION_DEFINITION
 
 // Explicitly handle VM flags that can be parsed by DartDev's run command.
+// Adds the [arg] to [vm_options] iff [vm_options] is not null.
 bool Options::ProcessVMOptions(const char* arg,
                                CommandLineOptions* vm_options) {
 #define IS_VM_OPTION(name, arg)                                                \
   if (OptionProcessor::ProcessOption(arg, name) != nullptr) {                  \
-    vm_options->AddArgument(arg);                                              \
+    if (vm_options != nullptr) {                                               \
+      vm_options->AddArgument(arg);                                            \
+    }                                                                          \
     return true;                                                               \
   }
 
@@ -227,6 +239,11 @@ bool Options::ParseDartDevArguments(int argc,
         resident_compiler_info_file_path_ = OptionProcessor::ProcessOption(
             argv[i], "--resident-compiler-info-file");
       }
+    } else if (Options::ProcessVMOptions(argv[i], nullptr)) {
+      // These (e.g. `-D`, `--enable-experiment` etc) were added already and not
+      // skipping them means they will be added twice which could cause a crash
+      // because dart_vm_options runs out of space.
+      skipVmOption = true;
     }
     if (!skipVmOption) {
       dart_vm_options->AddArgument(argv[i]);
