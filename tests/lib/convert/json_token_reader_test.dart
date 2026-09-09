@@ -58,6 +58,7 @@ void main() {
   testTokenReaderUnifiedRollbackSemantics();
   testReadStringSpanAndBytes();
   testStringCacheDirectMapped();
+  testSkipValueEofRejection();
 }
 
 void testTokenReaderPrimitives() {
@@ -2859,5 +2860,49 @@ void testStringCacheDirectMapped() {
     final val = reader.readString();
     Expect.equals('\uFFFD\uFFFD', val);
     reader.endObject();
+  }
+}
+
+void testSkipValueEofRejection() {
+  // 1. Empty buffer
+  Expect.throwsFormatException(
+    () => JsonTokenReader.fromBytes(Uint8List(0)).skipValue(),
+  );
+
+  // 2. Whitespace only
+  for (final ws in [' ', '\t', '\n', '\r', '   \t\r\n  ']) {
+    Expect.throwsFormatException(
+      () =>
+          JsonTokenReader.fromBytes(Uint8List.fromList(utf8.encode(ws)))
+              .skipValue(),
+    );
+  }
+
+  // 3. BOM only
+  Expect.throwsFormatException(
+    () =>
+        JsonTokenReader.fromBytes(Uint8List.fromList([0xEF, 0xBB, 0xBF]))
+            .skipValue(),
+  );
+
+  // 4. Trailing comma in array before EOF
+  {
+    final reader = JsonTokenReader.fromBytes(
+      Uint8List.fromList(utf8.encode('[1,')),
+    );
+    reader.beginArray();
+    Expect.equals(1, reader.readInt());
+    Expect.throwsFormatException(() => reader.skipValue());
+  }
+
+  // 5. Trailing comma in object before EOF
+  {
+    final reader = JsonTokenReader.fromBytes(
+      Uint8List.fromList(utf8.encode('{"a":1,')),
+    );
+    reader.beginObject();
+    Expect.equals('a', reader.nextName());
+    Expect.equals(1, reader.readInt());
+    Expect.throwsFormatException(() => reader.skipValue());
   }
 }
