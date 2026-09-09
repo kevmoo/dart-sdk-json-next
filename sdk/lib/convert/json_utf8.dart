@@ -2860,7 +2860,13 @@ final class _JsonTokenReader implements JsonTokenReader {
         return;
       }
       _beforeReadingValue();
-      if (_offset >= _bytes.length) return;
+      if (_offset >= _bytes.length) {
+        throw FormatException(
+          'Unexpected end of document',
+          _bytes,
+          _offset,
+        );
+      }
       final b = _bytes[_offset];
       if (b == 123 || b == 91) {
         _offset = _skipValue(_bytes, _offset);
