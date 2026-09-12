@@ -3423,37 +3423,7 @@ class _JsonTokenReader {
         _hasReadRoot = true;
         _offset = j;
       }
-
-      final strLen = end - start;
-      if (strLen == 0) return '';
-
-      if (!hasEscapes && maxByte <= 0x7F) {
-        if (strLen <= _maxCachedStringLength) {
-          final slot = (strLen ^ h) & _stringCacheMask;
-          final cached = _stringCache[slot];
-          if (cached != null && cached.length == strLen) {
-            var match = true;
-            for (var k = 0; k < strLen; k++) {
-              if (d.readUnsigned(base + start + k) != cached.codeUnitAt(k)) {
-                match = false;
-                break;
-              }
-            }
-            if (match) return cached;
-          }
-          final s = _stringFromAsciiBytes(d, base + start, base + end);
-          _stringCache[slot] = s;
-          return s;
-        }
-        return _stringFromAsciiBytes(d, base + start, base + end);
-      }
-
-      return _decodeStringUtf8(
-        _bytes,
-        start,
-        end,
-        allowMalformed: allowMalformed,
-      );
+      return _decodeCachedString(start, end);
     } catch (_) {
       _offset = prevOffset;
       _stackLength = prevStackLen;
