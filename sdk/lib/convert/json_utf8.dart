@@ -2296,9 +2296,70 @@ final class _JsonTokenReader implements JsonTokenReader {
     final initialTopState = _topState;
     final hadReadRoot = _hasReadRoot;
     try {
-      final (start, end, hadEscapesOrNonAscii) = _scanNameSpanAndConsumeColon();
+      _beforeReadingName();
+      var i = _offset;
+      if (i >= _bytes.length || _bytes[i] != 34) {
+        throw FormatException('Expected string at offset $i', _bytes, i);
+      }
+      final start = i + 1;
+      var hasEscapes = false;
+      var maxByte = 0;
+      var end = start;
+      while (true) {
+        if (end >= _bytes.length) {
+          throw FormatException(
+            'Unterminated string literal at offset $start',
+            _bytes,
+            start,
+          );
+        }
+        final b = _bytes[end];
+        if (b == 34) {
+          break;
+        }
+        if (b < 32) {
+          throw FormatException(
+            'Unescaped control character in string at offset $end',
+            _bytes,
+            end,
+          );
+        }
+        if (b == 92) {
+          hasEscapes = true;
+          end += 2;
+          if (end > _bytes.length) {
+            throw FormatException(
+              'Unterminated string escape at offset ${end - 2}',
+              _bytes,
+              end - 2,
+            );
+          }
+        } else {
+          maxByte |= b;
+          end++;
+        }
+      }
+      i = end + 1;
 
-      if (!hadEscapesOrNonAscii) {
+      // Fused colon consumption & trailing whitespace
+      if (i < _bytes.length && _bytes[i] == 58) {
+        i++;
+      } else {
+        while (i < _bytes.length && _isWs(_bytes[i])) {
+          i++;
+        }
+        if (i >= _bytes.length || _bytes[i] != 58) {
+          throw FormatException('Expected ":" at offset $i', _bytes, i);
+        }
+        i++;
+      }
+      while (i < _bytes.length && _isWs(_bytes[i])) {
+        i++;
+      }
+      _offset = i;
+      _topState = 1;
+
+      if (!hasEscapes && maxByte <= 0x7F) {
         return options.selectKey(_bytes, start, end);
       }
 
@@ -2861,11 +2922,7 @@ final class _JsonTokenReader implements JsonTokenReader {
       }
       _beforeReadingValue();
       if (_offset >= _bytes.length) {
-        throw FormatException(
-          'Unexpected end of document',
-          _bytes,
-          _offset,
-        );
+        throw FormatException('Unexpected end of document', _bytes, _offset);
       }
       final b = _bytes[_offset];
       if (b == 123 || b == 91) {
@@ -3758,6 +3815,19 @@ int _writeStringToBufferUtf8(String value, Uint8List buffer, int offset) {
   return cursor - offset;
 }
 
+@pragma('vm:prefer-inline')
+int _tryScaleToExactMantissa(double absVal, double p10) {
+  final scaled = absVal * p10;
+  if (scaled > 9007199254740991.0) {
+    return -1;
+  }
+  final intVal = scaled.round();
+  if (intVal / p10 != absVal) {
+    return -1;
+  }
+  return intVal;
+}
+
 int _writeDoubleToBufferUtf8(double value, Uint8List buffer, int offset) {
   if (!value.isFinite) {
     throw ArgumentError.value(value, 'value', 'Must be finite');
@@ -3832,117 +3902,116 @@ int _writeDoubleToBufferUtf8(double value, Uint8List buffer, int offset) {
   if (absVal >= 1e-15 && absVal <= 1e15) {
     final intPart = absVal.toInt();
     final intPartDigits = intPart == 0 ? 0 : _digitCountNegative(-intPart);
-    final maxFrac = 15 - intPartDigits;
+    var maxFrac = 15 - intPartDigits;
     if (maxFrac > 0 && maxFrac <= 15) {
-      final p10 = POWERS_OF_TEN[maxFrac];
-      final scaled = absVal * p10;
-      if (scaled <= 9007199254740991.0) {
-        var intVal = scaled.round();
-        if (intVal / p10 == absVal) {
-          // Exactly representable! Strip trailing zeros to get shortest representation.
-          var k = maxFrac;
-          while (k >= 4 && intVal % 10000 == 0) {
-            intVal ~/= 10000;
-            k -= 4;
-          }
-          while (k >= 2 && intVal % 100 == 0) {
-            intVal ~/= 100;
-            k -= 2;
-          }
-          if (k > 0 && intVal % 10 == 0) {
-            intVal ~/= 10;
-            k--;
-          }
-          if (k == 0) {
-            // Integer float, append '.0'
-            final negVal = -intVal;
-            final digitCount = _digitCountNegative(negVal);
-            final totalLen = (isNeg ? 1 : 0) + digitCount + 2;
-            if (offset + totalLen > buffer.length) {
-              throw RangeError.range(
-                offset,
-                0,
-                buffer.length >= totalLen ? buffer.length - totalLen : 0,
-                'offset',
-              );
-            }
-            var cursor = offset;
-            if (isNeg) {
-              buffer[cursor++] = 0x2D; // '-'
-            }
-            final writePos = cursor + digitCount - 1;
-            _emitDigitsBackwardNegative(buffer, writePos, negVal);
-            cursor += digitCount;
-            buffer[cursor++] = 0x2E; // '.'
-            buffer[cursor++] = 0x30; // '0'
-            return totalLen;
-          }
-
+      var intVal = _tryScaleToExactMantissa(absVal, POWERS_OF_TEN[maxFrac]);
+      if (intVal < 0) {
+        maxFrac += 1;
+        intVal = _tryScaleToExactMantissa(absVal, POWERS_OF_TEN[maxFrac]);
+      }
+      if (intVal >= 0) {
+        // Exactly representable! Strip trailing zeros to get shortest representation.
+        var k = maxFrac;
+        while (k >= 4 && intVal % 10000 == 0) {
+          intVal ~/= 10000;
+          k -= 4;
+        }
+        while (k >= 2 && intVal % 100 == 0) {
+          intVal ~/= 100;
+          k -= 2;
+        }
+        if (k > 0 && intVal % 10 == 0) {
+          intVal ~/= 10;
+          k--;
+        }
+        if (k == 0) {
+          // Integer float, append '.0'
           final negVal = -intVal;
-          final numDigits = _digitCountNegative(negVal);
-          if (numDigits > k) {
-            // >= 1, e.g. 3.14 (k=2, intVal=314, numDigits=3)
-            final totalLen = (isNeg ? 1 : 0) + numDigits + 1; // +1 for '.'
-            if (offset + totalLen > buffer.length) {
-              throw RangeError.range(
-                offset,
-                0,
-                buffer.length >= totalLen ? buffer.length - totalLen : 0,
-                'offset',
-              );
-            }
-            var cursor = offset;
-            if (isNeg) {
-              buffer[cursor++] = 0x2D; // '-'
-            }
-            final digitsStart = cursor;
-            var writePos = digitsStart + numDigits;
-            var temp = negVal;
-            var digitsWritten = 0;
-            while (digitsWritten < k) {
-              final next = temp ~/ 10;
-              final rem = -(temp - next * 10);
-              buffer[writePos--] = 48 + rem;
-              temp = next;
-              digitsWritten++;
-            }
-            buffer[writePos--] = 0x2E; // '.'
-            _emitDigitsBackwardNegative(buffer, writePos, temp);
-            return totalLen;
-          } else {
-            // < 1, e.g. 0.05 (k=2, intVal=5, numDigits=1)
-            final leadingZeros = k - numDigits;
-            final totalLen =
-                (isNeg ? 1 : 0) +
-                2 +
-                leadingZeros +
-                numDigits; // '0.' + zeros + digits
-            if (offset + totalLen > buffer.length) {
-              throw RangeError.range(
-                offset,
-                0,
-                buffer.length >= totalLen ? buffer.length - totalLen : 0,
-                'offset',
-              );
-            }
-            var cursor = offset;
-            if (isNeg) {
-              buffer[cursor++] = 0x2D; // '-'
-            }
-            buffer[cursor++] = 0x30; // '0'
-            buffer[cursor++] = 0x2E; // '.'
-            for (var z = 0; z < leadingZeros; z++) {
-              buffer[cursor++] = 0x30; // '0'
-            }
-            final writePos = cursor + numDigits - 1;
-            _emitDigitsBackwardNegative(buffer, writePos, negVal);
-            return totalLen;
+          final digitCount = _digitCountNegative(negVal);
+          final totalLen = (isNeg ? 1 : 0) + digitCount + 2;
+          if (offset + totalLen > buffer.length) {
+            throw RangeError.range(
+              offset,
+              0,
+              buffer.length >= totalLen ? buffer.length - totalLen : 0,
+              'offset',
+            );
           }
+          var cursor = offset;
+          if (isNeg) {
+            buffer[cursor++] = 0x2D; // '-'
+          }
+          final writePos = cursor + digitCount - 1;
+          _emitDigitsBackwardNegative(buffer, writePos, negVal);
+          cursor += digitCount;
+          buffer[cursor++] = 0x2E; // '.'
+          buffer[cursor++] = 0x30; // '0'
+          return totalLen;
+        }
+
+        final negVal = -intVal;
+        final numDigits = _digitCountNegative(negVal);
+        if (numDigits > k) {
+          // >= 1, e.g. 3.14 (k=2, intVal=314, numDigits=3)
+          final totalLen = (isNeg ? 1 : 0) + numDigits + 1; // +1 for '.'
+          if (offset + totalLen > buffer.length) {
+            throw RangeError.range(
+              offset,
+              0,
+              buffer.length >= totalLen ? buffer.length - totalLen : 0,
+              'offset',
+            );
+          }
+          var cursor = offset;
+          if (isNeg) {
+            buffer[cursor++] = 0x2D; // '-'
+          }
+          final digitsStart = cursor;
+          var writePos = digitsStart + numDigits;
+          var temp = negVal;
+          var digitsWritten = 0;
+          while (digitsWritten < k) {
+            final next = temp ~/ 10;
+            final rem = -(temp - next * 10);
+            buffer[writePos--] = 48 + rem;
+            temp = next;
+            digitsWritten++;
+          }
+          buffer[writePos--] = 0x2E; // '.'
+          _emitDigitsBackwardNegative(buffer, writePos, temp);
+          return totalLen;
+        } else {
+          // < 1, e.g. 0.05 (k=2, intVal=5, numDigits=1)
+          final leadingZeros = k - numDigits;
+          final totalLen =
+              (isNeg ? 1 : 0) +
+              2 +
+              leadingZeros +
+              numDigits; // '0.' + zeros + digits
+          if (offset + totalLen > buffer.length) {
+            throw RangeError.range(
+              offset,
+              0,
+              buffer.length >= totalLen ? buffer.length - totalLen : 0,
+              'offset',
+            );
+          }
+          var cursor = offset;
+          if (isNeg) {
+            buffer[cursor++] = 0x2D; // '-'
+          }
+          buffer[cursor++] = 0x30; // '0'
+          buffer[cursor++] = 0x2E; // '.'
+          for (var z = 0; z < leadingZeros; z++) {
+            buffer[cursor++] = 0x30; // '0'
+          }
+          final writePos = cursor + numDigits - 1;
+          _emitDigitsBackwardNegative(buffer, writePos, negVal);
+          return totalLen;
         }
       }
     }
   }
-
   // 4. Return 0 when exact 53-bit mantissa scaling is not possible.
   // TODO(kevmoo): Pure-Dart Dragonbox/Ryu Port:
   // Port a pure-Dart shortest float formatting algorithm (Dragonbox/Grisu2)
