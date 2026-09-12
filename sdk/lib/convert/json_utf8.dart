@@ -2296,9 +2296,70 @@ final class _JsonTokenReader implements JsonTokenReader {
     final initialTopState = _topState;
     final hadReadRoot = _hasReadRoot;
     try {
-      final (start, end, hadEscapesOrNonAscii) = _scanNameSpanAndConsumeColon();
+      _beforeReadingName();
+      var i = _offset;
+      if (i >= _bytes.length || _bytes[i] != 34) {
+        throw FormatException('Expected string at offset $i', _bytes, i);
+      }
+      final start = i + 1;
+      var hasEscapes = false;
+      var maxByte = 0;
+      var end = start;
+      while (true) {
+        if (end >= _bytes.length) {
+          throw FormatException(
+            'Unterminated string literal at offset $start',
+            _bytes,
+            start,
+          );
+        }
+        final b = _bytes[end];
+        if (b == 34) {
+          break;
+        }
+        if (b < 32) {
+          throw FormatException(
+            'Unescaped control character in string at offset $end',
+            _bytes,
+            end,
+          );
+        }
+        if (b == 92) {
+          hasEscapes = true;
+          end += 2;
+          if (end > _bytes.length) {
+            throw FormatException(
+              'Unterminated string escape at offset ${end - 2}',
+              _bytes,
+              end - 2,
+            );
+          }
+        } else {
+          maxByte |= b;
+          end++;
+        }
+      }
+      i = end + 1;
 
-      if (!hadEscapesOrNonAscii) {
+      // Fused colon consumption & trailing whitespace
+      if (i < _bytes.length && _bytes[i] == 58) {
+        i++;
+      } else {
+        while (i < _bytes.length && _isWs(_bytes[i])) {
+          i++;
+        }
+        if (i >= _bytes.length || _bytes[i] != 58) {
+          throw FormatException('Expected ":" at offset $i', _bytes, i);
+        }
+        i++;
+      }
+      while (i < _bytes.length && _isWs(_bytes[i])) {
+        i++;
+      }
+      _offset = i;
+      _topState = 1;
+
+      if (!hasEscapes && maxByte <= 0x7F) {
         return options.selectKey(_bytes, start, end);
       }
 
@@ -2861,11 +2922,7 @@ final class _JsonTokenReader implements JsonTokenReader {
       }
       _beforeReadingValue();
       if (_offset >= _bytes.length) {
-        throw FormatException(
-          'Unexpected end of document',
-          _bytes,
-          _offset,
-        );
+        throw FormatException('Unexpected end of document', _bytes, _offset);
       }
       final b = _bytes[_offset];
       if (b == 123 || b == 91) {
