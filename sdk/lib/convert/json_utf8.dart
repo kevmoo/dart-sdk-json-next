@@ -913,6 +913,13 @@ int _writeIntToBuffer(int value, Uint8List buffer, int offset) {
     buffer[offset] = 48; // '0'
     return 1;
   }
+  if (identical(1.0, 1)) {
+    final string = value.toString();
+    for (var i = 0; i < string.length; i++) {
+      buffer[offset + i] = string.codeUnitAt(i);
+    }
+    return string.length;
+  }
   // Above this magnitude the value is formatted with `toString` instead of
   // the `_digitPairs` loop. On the VM and Wasm `int` is a signed 64-bit
   // integer and the loop is exact across the whole range, so the limit sits
@@ -1219,12 +1226,14 @@ class _JsonUtf8EncoderSink extends ChunkedConversionSink<Object?> {
 
 class _JsonUtf8Stringifier extends _JsonStringifier {
   final int bufferSize;
+  int _currentBufferSize;
   final void Function(Uint8List list, int start, int end) addChunk;
   Uint8List buffer;
   int index = 0;
 
   _JsonUtf8Stringifier(super.toEncodable, this.bufferSize, this.addChunk)
-    : buffer = Uint8List(bufferSize);
+    : _currentBufferSize = bufferSize > 256 ? 256 : bufferSize,
+      buffer = Uint8List(bufferSize > 256 ? 256 : bufferSize);
 
   static void stringify(
     Object? object,
@@ -1265,8 +1274,12 @@ class _JsonUtf8Stringifier extends _JsonStringifier {
     if (index > 0) {
       addChunk(buffer, 0, index);
       index = 0;
+      if (_currentBufferSize < bufferSize) {
+        final next = _currentBufferSize * 2;
+        _currentBufferSize = next < bufferSize ? next : bufferSize;
+      }
     }
-    buffer = Uint8List(bufferSize);
+    buffer = Uint8List(_currentBufferSize);
   }
 
   @override
@@ -1292,8 +1305,10 @@ class _JsonUtf8Stringifier extends _JsonStringifier {
       }
       if (maxLen <= bufferSize) {
         _flushBuffer();
-        index += _writeStringToBuffer(object, buffer, index);
-        return true;
+        if (index + maxLen <= buffer.length) {
+          index += _writeStringToBuffer(object, buffer, index);
+          return true;
+        }
       }
       writeByte(0x22);
       writeStringContent(object);
@@ -1341,8 +1356,15 @@ class _JsonUtf8Stringifier extends _JsonStringifier {
         buffer[index++] = 0x3A; // ':'
       } else if (maxLen <= bufferSize) {
         _flushBuffer();
-        index += _writeStringToBuffer(key, buffer, index);
-        buffer[index++] = 0x3A; // ':'
+        if (index + maxLen <= buffer.length) {
+          index += _writeStringToBuffer(key, buffer, index);
+          buffer[index++] = 0x3A; // ':'
+        } else {
+          writeByte(0x22);
+          writeStringContent(key);
+          writeByte(0x22);
+          writeByte(0x3A);
+        }
       } else {
         writeByte(0x22);
         writeStringContent(key);
@@ -1369,6 +1391,10 @@ class _JsonUtf8Stringifier extends _JsonStringifier {
   }
 
   void writeNumber(num number) {
+    if (identical(1.0, 1)) {
+      writeAsciiString(number.toString());
+      return;
+    }
     if (number is int) {
       if (number > -1e19 && number < 1e19) {
         if (index + 24 <= buffer.length) {
@@ -1751,11 +1777,26 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
+  void _completeRootValue(int afterWsOffset) {
+    if (afterWsOffset < _bytes.length) {
+      throw FormatException(
+        'Unexpected character after root value at offset $afterWsOffset',
+        _bytes,
+        afterWsOffset,
+      );
+    }
+    _hasReadRoot = true;
+    _offset = afterWsOffset;
+  }
+
+  @pragma('vm:prefer-inline')
+  @pragma('wasm:prefer-inline')
   void _afterReadingValue() {
     if (_stackLength > 0) {
       _topState = 2;
     } else {
-      _hasReadRoot = true;
+      _skipWs();
+      _completeRootValue(_offset);
     }
   }
 
@@ -1801,9 +1842,9 @@ final class _JsonTokenReader implements JsonTokenReader {
       i++;
     }
     if (i >= _len) {
-      if (_stackLength > 0 && _topState == 3) {
+      if (_stackLength > 0) {
         throw FormatException(
-          'Unexpected end of document after comma',
+          'Unexpected end of document inside unclosed container',
           _bytes,
           _offset,
         );
@@ -2060,17 +2101,18 @@ final class _JsonTokenReader implements JsonTokenReader {
     try {
       _skipWs();
       if (_stackLength > 0) {
+        if (_offset >= _bytes.length) {
+          throw FormatException(
+            'Unexpected end of document inside unclosed container',
+            _bytes,
+            _offset,
+          );
+        }
+
         final closeChar = _topType == 0 ? 125 : 93;
         final closeStr = _topType == 0 ? '"}"' : '"]"';
 
         if (_topState == 3) {
-          if (_offset >= _bytes.length) {
-            throw FormatException(
-              'Unexpected end of document after comma',
-              _bytes,
-              _offset,
-            );
-          }
           if (_bytes[_offset] == 125 || _bytes[_offset] == 93) {
             throw FormatException(
               'Trailing comma before $closeStr at offset $_offset',
@@ -2413,8 +2455,9 @@ final class _JsonTokenReader implements JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
         _offset = j;
+        _skipWs();
+        _completeRootValue(_offset);
       }
 
       if (_isVerbatimUtf8(_bytes, start, end)) {
@@ -2471,8 +2514,9 @@ final class _JsonTokenReader implements JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
         _offset = j;
+        _skipWs();
+        _completeRootValue(_offset);
       }
 
       return (start, end);
@@ -2629,8 +2673,9 @@ final class _JsonTokenReader implements JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
         _offset = j;
+        _skipWs();
+        _completeRootValue(_offset);
       }
 
       return val;
@@ -2785,8 +2830,9 @@ final class _JsonTokenReader implements JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
         _offset = j;
+        _skipWs();
+        _completeRootValue(_offset);
       }
 
       if (mantissa == 0) {
@@ -3829,6 +3875,7 @@ int _tryScaleToExactMantissa(double absVal, double p10) {
 }
 
 int _writeDoubleToBufferUtf8(double value, Uint8List buffer, int offset) {
+  if (identical(1.0, 1)) return 0;
   if (!value.isFinite) {
     throw ArgumentError.value(value, 'value', 'Must be finite');
   }
