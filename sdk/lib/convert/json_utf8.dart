@@ -1224,7 +1224,7 @@ class _JsonUtf8Stringifier extends _JsonStringifier {
   int index = 0;
 
   _JsonUtf8Stringifier(super.toEncodable, this.bufferSize, this.addChunk)
-    : buffer = Uint8List(bufferSize);
+    : buffer = Uint8List(bufferSize > 2048 ? 2048 : bufferSize);
 
   static void stringify(
     Object? object,
@@ -3829,6 +3829,7 @@ int _tryScaleToExactMantissa(double absVal, double p10) {
 }
 
 int _writeDoubleToBufferUtf8(double value, Uint8List buffer, int offset) {
+  if (identical(1.0, 1)) return 0;
   if (!value.isFinite) {
     throw ArgumentError.value(value, 'value', 'Must be finite');
   }
