@@ -373,7 +373,8 @@ def GetVersion(no_git_hash=False, version_file=None):
 
     suffix = ''
     if version.channel in ['main', 'be']:
-        suffix = '-edge' if no_git_hash else '-edge.{}'.format(GetGitRevision())
+        suffix = ('-json-next'
+                  if no_git_hash else '-json-next.{}'.format(GetGitRevision()))
     elif version.channel in ('beta', 'dev'):
         suffix = '-{}.{}.{}'.format(version.prerelease,
                                     version.prerelease_patch, version.channel)
