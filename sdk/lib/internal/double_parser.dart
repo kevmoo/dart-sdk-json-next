@@ -1978,7 +1978,7 @@ final Int32List _power10_Exp = Int32List.fromList(const <int>[
 ]);
 
 @pragma('vm:prefer-inline')
-bool _unsignedLe(int a, int b) => identical(1, 1.0)
+bool unsignedLeInternal(int a, int b) => identical(1, 1.0)
     ? a <= b
     : (a ^ 0x8000000000000000) <= (b ^ 0x8000000000000000);
 
@@ -2019,7 +2019,7 @@ double _doubleFromBits(int bits) {
 }
 
 @pragma('vm:prefer-inline')
-double? _tryParseDoubleFastEiselLemire(
+double? tryParseDoubleFastEiselLemireInternal(
   int mantissa,
   int decimalExp,
   bool isNegative,
@@ -2030,7 +2030,7 @@ double? _tryParseDoubleFastEiselLemire(
   }
 
   // 2. Exponent-zero integer bypass (exact up to 53 bits: 9007199254740991)
-  if (decimalExp == 0 && _unsignedLe(mantissa, 0x001FFFFFFFFFFFFF)) {
+  if (decimalExp == 0 && unsignedLeInternal(mantissa, 0x001FFFFFFFFFFFFF)) {
     return isNegative ? -mantissa.toDouble() : mantissa.toDouble();
   }
 

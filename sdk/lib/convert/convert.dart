@@ -171,8 +171,8 @@ import 'dart:_internal'
         hexDigitValue,
         parseHexByte,
         POWERS_OF_TEN,
-        _tryParseDoubleFastEiselLemire,
-        _unsignedLe;
+        tryParseDoubleFastEiselLemireInternal,
+        unsignedLeInternal;
 
 part 'ascii.dart';
 part 'base64.dart';

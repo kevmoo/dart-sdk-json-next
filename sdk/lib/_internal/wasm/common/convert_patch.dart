@@ -6,7 +6,14 @@ import "dart:_boxed_int";
 import "dart:_compact_hash" show createMapFromStringKeyValueListUnsafe;
 import "dart:_error_utils";
 import "dart:_internal"
-    show patch, POWERS_OF_TEN, unsafeCast, pushWasmArray, popWasmArray;
+    show
+        patch,
+        POWERS_OF_TEN,
+        unsafeCast,
+        pushWasmArray,
+        popWasmArray,
+        unsignedLeInternal,
+        tryParseDoubleFastEiselLemireInternal;
 import "dart:_list"
     show GrowableList, WasmListBaseUnsafeExtensions, WasmListBase;
 import "dart:_string";
@@ -299,10 +306,8 @@ class _NumberBuffer {
     return _stringFromAsciiBytes(array, 0, length);
   }
 
-  num parseNum() =>
-      _tryParseIntUtf8(list, 0, length) ??
-      _parseDoubleFromBytes(list, 0, length);
-  double parseDouble() => _parseDoubleFromBytes(list, 0, length);
+  num parseNum() => num.parse(getString());
+  double parseDouble() => _parseValidFloat(getString());
 }
 
 /**
@@ -3884,17 +3889,17 @@ class _JsonTokenReader {
 
       if (decimalExp == 0 &&
           !truncatedDigits &&
-          _unsignedLe(mantissa, 0x001FFFFFFFFFFFFF)) {
+          unsignedLeInternal(mantissa, 0x001FFFFFFFFFFFFF)) {
         return isNegative ? -mantissa.toDouble() : mantissa.toDouble();
       }
 
-      var result = _tryParseDoubleFastEiselLemire(
+      var result = tryParseDoubleFastEiselLemireInternal(
         mantissa,
         decimalExp,
         isNegative,
       );
       if (result != null && truncatedDigits) {
-        final resultPlus1 = _tryParseDoubleFastEiselLemire(
+        final resultPlus1 = tryParseDoubleFastEiselLemireInternal(
           mantissa + 1,
           decimalExp,
           isNegative,

@@ -18,7 +18,7 @@ import 'dart:convert' show Converter;
 import 'dart:core' hide Symbol;
 import 'dart:core' as core show Symbol;
 import 'dart:math' show Random;
-import 'dart:typed_data' show Uint8List, Int32List, Int64List;
+import 'dart:typed_data' show Uint8List, Int32List, Int64List, ByteData, Endian;
 
 part 'async_cast.dart';
 part 'bytes_builder.dart';

@@ -2841,17 +2841,17 @@ final class _JsonTokenReader implements JsonTokenReader {
 
       if (decimalExp == 0 &&
           !truncatedDigits &&
-          _unsignedLe(mantissa, 0x001FFFFFFFFFFFFF)) {
+          unsignedLeInternal(mantissa, 0x001FFFFFFFFFFFFF)) {
         return isNegative ? -mantissa.toDouble() : mantissa.toDouble();
       }
 
-      var result = _tryParseDoubleFastEiselLemire(
+      var result = tryParseDoubleFastEiselLemireInternal(
         mantissa,
         decimalExp,
         isNegative,
       );
       if (result != null && truncatedDigits) {
-        final resultPlus1 = _tryParseDoubleFastEiselLemire(
+        final resultPlus1 = tryParseDoubleFastEiselLemireInternal(
           mantissa + 1,
           decimalExp,
           isNegative,
@@ -2888,15 +2888,6 @@ final class _JsonTokenReader implements JsonTokenReader {
       final (start, end) = _scanScalarSpan();
       final asInt = _tryParseIntFromBytes(_bytes, start, end);
       if (asInt != null) return asInt;
-
-      final fastDouble = _tryParseDoubleUtf8(
-        _bytes,
-        start,
-        end,
-        allowFallback: false,
-      );
-      if (fastDouble != null) return fastDouble;
-
       return _parseDoubleFromBytes(_bytes, start, end);
     } catch (_) {
       _restoreState(
@@ -4432,14 +4423,18 @@ double? _tryParseDoubleUtf8(
   // Exponent-zero integer bypass (exact up to 53 bits)
   if (decimalExp == 0 &&
       !truncatedDigits &&
-      _unsignedLe(mantissa, 0x001FFFFFFFFFFFFF)) {
+      unsignedLeInternal(mantissa, 0x001FFFFFFFFFFFFF)) {
     return isNegative ? -mantissa.toDouble() : mantissa.toDouble();
   }
 
   // Eisel-Lemire 64-bit float parser
-  var result = _tryParseDoubleFastEiselLemire(mantissa, decimalExp, isNegative);
+  var result = tryParseDoubleFastEiselLemireInternal(
+    mantissa,
+    decimalExp,
+    isNegative,
+  );
   if (result != null && truncatedDigits) {
-    final resultPlus1 = _tryParseDoubleFastEiselLemire(
+    final resultPlus1 = tryParseDoubleFastEiselLemireInternal(
       mantissa + 1,
       decimalExp,
       isNegative,
