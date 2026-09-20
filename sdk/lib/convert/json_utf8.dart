@@ -2888,6 +2888,15 @@ final class _JsonTokenReader implements JsonTokenReader {
       final (start, end) = _scanScalarSpan();
       final asInt = _tryParseIntFromBytes(_bytes, start, end);
       if (asInt != null) return asInt;
+
+      final fastDouble = _tryParseDoubleUtf8(
+        _bytes,
+        start,
+        end,
+        allowFallback: false,
+      );
+      if (fastDouble != null) return fastDouble;
+
       return _parseDoubleFromBytes(_bytes, start, end);
     } catch (_) {
       _restoreState(
