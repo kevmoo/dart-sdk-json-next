@@ -170,7 +170,9 @@ import 'dart:_internal'
         checkNotNullable,
         hexDigitValue,
         parseHexByte,
-        POWERS_OF_TEN;
+        POWERS_OF_TEN,
+        _tryParseDoubleFastEiselLemire,
+        _unsignedLe;
 
 part 'ascii.dart';
 part 'base64.dart';

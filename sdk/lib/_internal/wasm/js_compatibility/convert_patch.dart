@@ -221,11 +221,10 @@ class _NumberBuffer {
     return result;
   }
 
-  // TODO(lrn): See if parsing of numbers can be abstracted to something
-  // not only working on strings, but also on char-code lists, without losing
-  // performance.
-  num parseNum() => num.parse(getString());
-  double parseDouble() => double.parse(getString());
+  num parseNum() =>
+      _tryParseIntUtf8(list, 0, length) ??
+      _parseDoubleFromBytes(list, 0, length);
+  double parseDouble() => _parseDoubleFromBytes(list, 0, length);
 }
 
 /**
