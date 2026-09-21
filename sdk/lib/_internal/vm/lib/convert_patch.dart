@@ -14,7 +14,9 @@ import "dart:_internal"
         unsafeCast,
         writeIntoOneByteString,
         writeIntoTwoByteString,
-        createOneByteStringFromCharacters;
+        createOneByteStringFromCharacters,
+        unsignedLeInternal,
+        tryParseDoubleFastEiselLemireInternal;
 
 /// This patch library has no additional parts.
 
@@ -1337,6 +1339,7 @@ mixin _ChunkedJsonParser<T> on _JsonParserWithListener {
         fail(position);
       }
     }
+    int digitCount = 0;
     if (digit == 0) {
       position++;
       if (position == length) return beginChunkNumber(NUM_ZERO, start);
@@ -1345,7 +1348,6 @@ mixin _ChunkedJsonParser<T> on _JsonParserWithListener {
       // If starting with zero, next character must not be digit.
       if (digit <= 9) fail(position);
     } else {
-      int digitCount = 0;
       do {
         if (digitCount >= 18) {
           // Check for overflow.
@@ -1367,10 +1369,23 @@ mixin _ChunkedJsonParser<T> on _JsonParserWithListener {
         digit = char ^ CHAR_0;
       } while (digit <= 9);
     }
+    int mantissa = 0;
+    bool canUseFastEisel = false;
+    if (!isUtf16Input) {
+      if (digitCount <= 19) {
+        mantissa = -intValue;
+        canUseFastEisel = true;
+      }
+      if (isDouble) {
+        intValue = 0;
+      }
+    }
     if (char == DECIMALPOINT) {
       if (!isDouble) {
         isDouble = true;
-        doubleValue = (intValue == 0) ? 0.0 : -intValue.toDouble();
+        if (isUtf16Input) {
+          doubleValue = (intValue == 0) ? 0.0 : -intValue.toDouble();
+        }
       }
       intValue = 0;
       position++;
@@ -1378,19 +1393,39 @@ mixin _ChunkedJsonParser<T> on _JsonParserWithListener {
       char = _getCharUnsafe(position);
       digit = char ^ CHAR_0;
       if (digit > 9) fail(position);
-      do {
-        doubleValue = 10.0 * doubleValue + digit;
-        intValue -= 1;
-        position++;
-        if (position == length) return beginChunkNumber(NUM_DOT_DIGIT, start);
-        char = _getCharUnsafe(position);
-        digit = char ^ CHAR_0;
-      } while (digit <= 9);
+      if (!isUtf16Input) {
+        do {
+          if (mantissa == 0 && digit == 0) {
+            intValue -= 1;
+          } else if (digitCount < 19) {
+            mantissa = 10 * mantissa + digit;
+            digitCount += 1;
+            intValue -= 1;
+          } else if (digit != 0) {
+            canUseFastEisel = false;
+          }
+          position++;
+          if (position == length) return beginChunkNumber(NUM_DOT_DIGIT, start);
+          char = _getCharUnsafe(position);
+          digit = char ^ CHAR_0;
+        } while (digit <= 9);
+      } else {
+        do {
+          doubleValue = 10.0 * doubleValue + digit;
+          intValue -= 1;
+          position++;
+          if (position == length) return beginChunkNumber(NUM_DOT_DIGIT, start);
+          char = _getCharUnsafe(position);
+          digit = char ^ CHAR_0;
+        } while (digit <= 9);
+      }
     }
     if ((char | 0x20) == CHAR_e) {
       if (!isDouble) {
         isDouble = true;
-        doubleValue = (intValue == 0) ? 0.0 : -intValue.toDouble();
+        if (isUtf16Input) {
+          doubleValue = (intValue == 0) ? 0.0 : -intValue.toDouble();
+        }
         intValue = 0;
       }
       position++;
@@ -1418,6 +1453,22 @@ mixin _ChunkedJsonParser<T> on _JsonParserWithListener {
         digit = char ^ CHAR_0;
       } while (digit <= 9);
       if (exponentOverflow) {
+        if (!isUtf16Input) {
+          if (canUseFastEisel) {
+            if (mantissa == 0 || expSign < 0) {
+              listener.handleNumber(sign < 0 ? -0.0 : 0.0);
+              return position;
+            }
+            if (intValue >= -50) {
+              listener.handleNumber(
+                sign < 0 ? double.negativeInfinity : double.infinity,
+              );
+              return position;
+            }
+          }
+          listener.handleNumber(parseDouble(start, position));
+          return position;
+        }
         if (doubleValue == 0.0 || expSign < 0) {
           listener.handleNumber(sign < 0 ? -0.0 : 0.0);
         } else {
@@ -1433,6 +1484,43 @@ mixin _ChunkedJsonParser<T> on _JsonParserWithListener {
       int bitFlag = -(sign + 1) >> 1; // 0 if sign == -1, -1 if sign == 1
       // Negate if bitFlag is -1 by doing ~intValue + 1
       listener.handleNumber((intValue ^ bitFlag) - bitFlag);
+      return position;
+    }
+    if (!isUtf16Input) {
+      if (canUseFastEisel) {
+        if (mantissa == 0) {
+          listener.handleNumber(sign < 0 ? -0.0 : 0.0);
+          return position;
+        }
+        int exponent = intValue;
+        if (unsignedLeInternal(mantissa, 0x001FFFFFFFFFFFFF)) {
+          double signedMantissa = (sign < 0 ? -mantissa : mantissa).toDouble();
+          if (exponent >= -22) {
+            if (exponent < 0) {
+              listener.handleNumber(signedMantissa / POWERS_OF_TEN[-exponent]);
+              return position;
+            }
+            if (exponent == 0) {
+              listener.handleNumber(signedMantissa);
+              return position;
+            }
+            if (exponent <= 22) {
+              listener.handleNumber(signedMantissa * POWERS_OF_TEN[exponent]);
+              return position;
+            }
+          }
+        }
+        final fastDouble = tryParseDoubleFastEiselLemireInternal(
+          mantissa,
+          exponent,
+          sign < 0,
+        );
+        if (fastDouble != null) {
+          listener.handleNumber(fastDouble);
+          return position;
+        }
+      }
+      listener.handleNumber(parseDouble(start, position));
       return position;
     }
     // Double values at or above this value (2 ** 53) may have lost precision.

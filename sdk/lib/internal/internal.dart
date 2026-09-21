@@ -18,7 +18,7 @@ import 'dart:convert' show Converter;
 import 'dart:core' hide Symbol;
 import 'dart:core' as core show Symbol;
 import 'dart:math' show Random;
-import 'dart:typed_data' show Uint8List;
+import 'dart:typed_data' show Uint8List, Int32List, Int64List, ByteData, Endian;
 
 part 'async_cast.dart';
 part 'bytes_builder.dart';
@@ -32,6 +32,7 @@ part 'patch.dart';
 part 'print.dart';
 part 'sort.dart';
 part 'symbol.dart';
+part 'double_parser.dart';
 
 /// Unsafely treats [value] as type [T].
 ///

@@ -2,7 +2,14 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import 'dart:_internal' show ClassID, patch, POWERS_OF_TEN, unsafeCast;
+import 'dart:_internal'
+    show
+        ClassID,
+        patch,
+        POWERS_OF_TEN,
+        unsafeCast,
+        unsignedLeInternal,
+        tryParseDoubleFastEiselLemireInternal;
 import 'dart:_js_helper' as js;
 import 'dart:_js_string_convert';
 import 'dart:_js_types';
@@ -29,11 +36,15 @@ dynamic _parseJson(
 class JsonUtf8Decoder {
   @patch
   Object? convert(List<int> input) {
-    // Route through the platform-native string decoder and `JSON.parse`,
-    // which are far faster than the pure-Dart token reader on web.
-    final source = Utf8Decoder(allowMalformed: allowMalformed).convert(input);
-    return _parseJson(source, reviver);
+    var parser = _JsonUtf8DecoderSink._createParser(reviver, allowMalformed);
+    parser.parseChunk(input, 0, input.length);
+    parser.close();
+    return parser.result;
   }
+
+  @patch
+  ChunkedConversionSink<List<int>> startChunkedConversion(Sink<Object?> sink) =>
+      _JsonUtf8DecoderSink(reviver, sink, allowMalformed);
 }
 
 @patch
@@ -221,11 +232,10 @@ class _NumberBuffer {
     return result;
   }
 
-  // TODO(lrn): See if parsing of numbers can be abstracted to something
-  // not only working on strings, but also on char-code lists, without losing
-  // performance.
-  num parseNum() => num.parse(getString());
-  double parseDouble() => double.parse(getString());
+  num parseNum() =>
+      _tryParseIntUtf8(list, 0, length) ??
+      _parseDoubleFromBytes(list, 0, length);
+  double parseDouble() => _parseDoubleFromBytes(list, 0, length);
 }
 
 /**
@@ -486,6 +496,8 @@ abstract class _ChunkedJsonParser<T> {
 
   /** Sets the current source chunk. */
   void set chunk(T source);
+
+  bool get isUtf16Input;
 
   /**
    * Length of current chunk.
@@ -1227,6 +1239,7 @@ abstract class _ChunkedJsonParser<T> {
         fail(position);
       }
     }
+    int digitCount = 0;
     if (digit == 0) {
       position++;
       if (position == length) return beginChunkNumber(NUM_ZERO, start);
@@ -1235,7 +1248,6 @@ abstract class _ChunkedJsonParser<T> {
       // If starting with zero, next character must not be digit.
       if (digit <= 9) fail(position);
     } else {
-      int digitCount = 0;
       do {
         if (digitCount >= 18) {
           // Check for overflow.
@@ -1257,10 +1269,23 @@ abstract class _ChunkedJsonParser<T> {
         digit = char ^ CHAR_0;
       } while (digit <= 9);
     }
+    int mantissa = 0;
+    bool canUseFastEisel = false;
+    if (!isUtf16Input) {
+      if (digitCount <= 19) {
+        mantissa = -intValue;
+        canUseFastEisel = true;
+      }
+      if (isDouble) {
+        intValue = 0;
+      }
+    }
     if (char == DECIMALPOINT) {
       if (!isDouble) {
         isDouble = true;
-        doubleValue = (intValue == 0) ? 0.0 : -intValue.toDouble();
+        if (isUtf16Input) {
+          doubleValue = (intValue == 0) ? 0.0 : -intValue.toDouble();
+        }
       }
       intValue = 0;
       position++;
@@ -1268,19 +1293,39 @@ abstract class _ChunkedJsonParser<T> {
       char = getChar(position);
       digit = char ^ CHAR_0;
       if (digit > 9) fail(position);
-      do {
-        doubleValue = 10.0 * doubleValue + digit;
-        intValue -= 1;
-        position++;
-        if (position == length) return beginChunkNumber(NUM_DOT_DIGIT, start);
-        char = getChar(position);
-        digit = char ^ CHAR_0;
-      } while (digit <= 9);
+      if (!isUtf16Input) {
+        do {
+          if (mantissa == 0 && digit == 0) {
+            intValue -= 1;
+          } else if (digitCount < 19) {
+            mantissa = 10 * mantissa + digit;
+            digitCount += 1;
+            intValue -= 1;
+          } else if (digit != 0) {
+            canUseFastEisel = false;
+          }
+          position++;
+          if (position == length) return beginChunkNumber(NUM_DOT_DIGIT, start);
+          char = getChar(position);
+          digit = char ^ CHAR_0;
+        } while (digit <= 9);
+      } else {
+        do {
+          doubleValue = 10.0 * doubleValue + digit;
+          intValue -= 1;
+          position++;
+          if (position == length) return beginChunkNumber(NUM_DOT_DIGIT, start);
+          char = getChar(position);
+          digit = char ^ CHAR_0;
+        } while (digit <= 9);
+      }
     }
     if ((char | 0x20) == CHAR_e) {
       if (!isDouble) {
         isDouble = true;
-        doubleValue = (intValue == 0) ? 0.0 : -intValue.toDouble();
+        if (isUtf16Input) {
+          doubleValue = (intValue == 0) ? 0.0 : -intValue.toDouble();
+        }
         intValue = 0;
       }
       position++;
@@ -1308,6 +1353,22 @@ abstract class _ChunkedJsonParser<T> {
         digit = char ^ CHAR_0;
       } while (digit <= 9);
       if (exponentOverflow) {
+        if (!isUtf16Input) {
+          if (canUseFastEisel) {
+            if (mantissa == 0 || expSign < 0) {
+              listener.handleNumber(sign < 0 ? -0.0 : 0.0);
+              return position;
+            }
+            if (intValue >= -50) {
+              listener.handleNumber(
+                sign < 0 ? double.negativeInfinity : double.infinity,
+              );
+              return position;
+            }
+          }
+          listener.handleNumber(parseDouble(start, position));
+          return position;
+        }
         if (doubleValue == 0.0 || expSign < 0) {
           listener.handleNumber(sign < 0 ? -0.0 : 0.0);
         } else {
@@ -1323,6 +1384,43 @@ abstract class _ChunkedJsonParser<T> {
       int bitFlag = -(sign + 1) >> 1; // 0 if sign == -1, -1 if sign == 1
       // Negate if bitFlag is -1 by doing ~intValue + 1
       listener.handleNumber((intValue ^ bitFlag) - bitFlag);
+      return position;
+    }
+    if (!isUtf16Input) {
+      if (canUseFastEisel) {
+        if (mantissa == 0) {
+          listener.handleNumber(sign < 0 ? -0.0 : 0.0);
+          return position;
+        }
+        int exponent = intValue;
+        if (unsignedLeInternal(mantissa, 0x001FFFFFFFFFFFFF)) {
+          double signedMantissa = (sign < 0 ? -mantissa : mantissa).toDouble();
+          if (exponent >= -22) {
+            if (exponent < 0) {
+              listener.handleNumber(signedMantissa / POWERS_OF_TEN[-exponent]);
+              return position;
+            }
+            if (exponent == 0) {
+              listener.handleNumber(signedMantissa);
+              return position;
+            }
+            if (exponent <= 22) {
+              listener.handleNumber(signedMantissa * POWERS_OF_TEN[exponent]);
+              return position;
+            }
+          }
+        }
+        final fastDouble = tryParseDoubleFastEiselLemireInternal(
+          mantissa,
+          exponent,
+          sign < 0,
+        );
+        if (fastDouble != null) {
+          listener.handleNumber(fastDouble);
+          return position;
+        }
+      }
+      listener.handleNumber(parseDouble(start, position));
       return position;
     }
     // Double values at or above this value (2 ** 53) may have lost precision.
@@ -1370,6 +1468,9 @@ class _JsonStringParser extends _ChunkedJsonParser<String> {
   int chunkEnd = 0;
 
   _JsonStringParser(_JsonListener listener) : super(listener);
+
+  @pragma('wasm:prefer-inline')
+  bool get isUtf16Input => true;
 
   int getChar(int position) => chunk.codeUnitAt(position);
 
@@ -1437,6 +1538,9 @@ class _JsonDecoderSink extends _StringSinkConversionSink<StringBuffer> {
     _sink.add(decoded);
     _sink.close();
   }
+
+  ByteConversionSink asUtf8Sink(bool allowMalformed) =>
+      _JsonUtf8DecoderSink(_reviver, _sink, allowMalformed);
 }
 
 /**
@@ -1445,17 +1549,27 @@ class _JsonDecoderSink extends _StringSinkConversionSink<StringBuffer> {
 class _JsonUtf8Parser extends _ChunkedJsonParser<List<int>> {
   static final Uint8List emptyChunk = Uint8List(0);
 
-  final bool allowMalformed;
+  final _Utf8Decoder decoder;
 
   List<int> chunk = emptyChunk;
   int chunkEnd = 0;
 
-  _JsonUtf8Parser(_JsonListener listener, this.allowMalformed)
-    : super(listener) {
+  _JsonUtf8Parser(_JsonListener listener, bool allowMalformed)
+    : decoder = _Utf8Decoder(allowMalformed),
+      super(listener) {
     // Starts out checking for an optional BOM (KWD_BOM, count = 0).
     partialState =
         _ChunkedJsonParser.PARTIAL_KEYWORD | _ChunkedJsonParser.KWD_BOM;
   }
+
+  void parseChunk(List<int> value, int start, int end) {
+    chunk = value;
+    chunkEnd = end;
+    parse(start);
+  }
+
+  @pragma('wasm:prefer-inline')
+  bool get isUtf16Input => false;
 
   int getChar(int position) => chunk[position];
 
@@ -1471,23 +1585,24 @@ class _JsonUtf8Parser extends _ChunkedJsonParser<List<int>> {
   }
 
   void beginString() {
+    decoder._state = _Utf8Decoder.initial;
     this.buffer = StringBuffer();
   }
 
   void addSliceToString(int start, int end) {
     final StringBuffer buffer = this.buffer;
-    buffer.write(
-      _Utf8Decoder(allowMalformed).convertChunked(chunk, start, end),
-    );
+    buffer.write(decoder.convertChunked(chunk, start, end));
   }
 
   void addCharToString(int charCode) {
     final StringBuffer buffer = this.buffer;
+    decoder.flush(buffer);
     buffer.writeCharCode(charCode);
   }
 
   String endString() {
     final StringBuffer buffer = this.buffer;
+    decoder.flush(buffer);
     this.buffer = null;
     return buffer.toString();
   }
@@ -1498,8 +1613,48 @@ class _JsonUtf8Parser extends _ChunkedJsonParser<List<int>> {
   }
 
   double parseDouble(int start, int end) {
-    String string = getString(start, end, 0x7f);
-    return _parseDouble(string, 0, string.length);
+    final c = chunk;
+    if (c is Uint8List) {
+      return _parseDoubleFromBytes(c, start, end);
+    }
+    return _parseDoubleFromBytes(
+      _Utf8Decoder._makeUint8List(c, start, end),
+      0,
+      end - start,
+    );
+  }
+}
+
+class _JsonUtf8DecoderSink extends ByteConversionSink {
+  final _JsonUtf8Parser _parser;
+  final Sink<Object?> _sink;
+
+  _JsonUtf8DecoderSink(reviver, this._sink, bool allowMalformed)
+    : _parser = _createParser(reviver, allowMalformed);
+
+  static _JsonUtf8Parser _createParser(
+    Object? Function(Object? key, Object? value)? reviver,
+    bool allowMalformed,
+  ) => _JsonUtf8Parser(_JsonListener(reviver), allowMalformed);
+
+  void addSlice(List<int> chunk, int start, int end, bool isLast) {
+    _addChunk(chunk, start, end);
+    if (isLast) close();
+  }
+
+  void add(List<int> chunk) {
+    _addChunk(chunk, 0, chunk.length);
+  }
+
+  void _addChunk(List<int> chunk, int start, int end) {
+    _parser.parseChunk(chunk, start, end);
+  }
+
+  void close() {
+    _parser.close();
+    var decoded = _parser.result;
+    _sink.add(decoded);
+    _sink.close();
   }
 }
 
