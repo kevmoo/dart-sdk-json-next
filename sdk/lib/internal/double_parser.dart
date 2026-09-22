@@ -1319,9 +1319,9 @@ const List<int> _power10_L_32 = <int>[
   0xa7ea7649, 0x570f09ea, // q = 308
 ];
 
-final Int64List? _power10_H = _initInt64From32(_power10_H_32);
+final List<int>? _power10_H = _initInt64From32(_power10_H_32);
 
-final Int64List? _power10_L = _initInt64From32(_power10_L_32);
+final List<int>? _power10_L = _initInt64From32(_power10_L_32);
 
 final Int32List _power10_Exp = Int32List.fromList(const <int>[
   -1136, // q = -342
