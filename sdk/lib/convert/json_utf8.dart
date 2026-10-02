@@ -2588,8 +2588,7 @@ final class _JsonTokenReader implements JsonTokenReader {
         _offset = j;
       }
     } else {
-      _hasReadRoot = true;
-      _offset = j;
+      _completeRootValue(j);
     }
     return (start, end);
   }
