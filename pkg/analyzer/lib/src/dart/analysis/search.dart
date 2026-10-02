@@ -311,12 +311,8 @@ class ImportElementReferencesVisitor extends RecursiveAstVisitor2<void> {
   void visitImportPrefixedAssignmentTarget(
     ImportPrefixedAssignmentTarget node,
   ) {
-    var readElement = node.read.elementOrRecovery;
-    var writeElement = switch (node.write) {
-      NamedWriteResolutionWithElement(:var element) => element,
-      InvalidNamedWriteResolution(:var candidates) => candidates.firstOrNull,
-      _ => null,
-    };
+    var readElement = node.read?.elementOrRecovery;
+    var writeElement = node.write?.elementOrRecovery;
     var prefixFragment = import.prefix;
     if (prefixFragment != null &&
         node.importPrefix.element == prefixFragment.element &&
@@ -352,7 +348,7 @@ class ImportElementReferencesVisitor extends RecursiveAstVisitor2<void> {
 
   @override
   void visitImportPrefixedNameExpression(ImportPrefixedNameExpression node) {
-    var element = node.resolution.elementOrRecovery?.baseElement;
+    var element = node.resolution?.elementOrRecovery?.baseElement;
     var prefixFragment = import.prefix;
     if (importedElements.contains(element) &&
         prefixFragment != null &&
@@ -451,7 +447,7 @@ class ImportElementReferencesVisitor extends RecursiveAstVisitor2<void> {
 
   @override
   void visitUnqualifiedNameExpression(UnqualifiedNameExpression node) {
-    var element = node.resolution.elementOrRecovery?.baseElement;
+    var element = node.resolution?.elementOrRecovery?.baseElement;
     if (import.prefix == null && importedElements.contains(element)) {
       _addResult(node.name.offset, 0);
     }
@@ -1011,6 +1007,8 @@ class Search {
           SearchResultKind.REFERENCE_BY_CONSTRUCTOR_TEAR_OFF,
       IndexRelationKind.IS_REFERENCED_BY_DOT_SHORTHAND_CONSTRUCTOR_TEAR_OFF:
           SearchResultKind.DOT_SHORTHANDS_CONSTRUCTOR_TEAR_OFF,
+      IndexRelationKind.IS_REFERENCED_BY_CONSTRUCTOR_COMMENT_REFERENCE:
+          SearchResultKind.REFERENCE_BY_CONSTRUCTOR_COMMENT_REFERENCE,
     });
     return results;
   }
@@ -1369,6 +1367,7 @@ enum SearchResultKind {
   REFERENCE_BY_NAMED_ARGUMENT,
   REFERENCE_IN_PATTERN_FIELD,
   REFERENCE_BY_CONSTRUCTOR_TEAR_OFF,
+  REFERENCE_BY_CONSTRUCTOR_COMMENT_REFERENCE,
   REFERENCE_IN_EXTENDS_CLAUSE,
   REFERENCE_IN_WITH_CLAUSE,
   REFERENCE_IN_ON_CLAUSE,
@@ -1566,10 +1565,16 @@ class _FindLibraryDeclarations {
       className = enclosing.name;
     }
 
-    // For constructors, include the class name as part of the searched name.
-    var filteredName = element is ConstructorElement
-        ? element.displayName
-        : name;
+    String filteredName;
+    switch (element) {
+      case ConstructorElement():
+        // Include the class name for constructors, omit the `new` name.
+        filteredName = element.name == 'new'
+            ? element.enclosingElement.displayName
+            : element.displayName;
+      default:
+        filteredName = name;
+    }
     if (matcher.score(filteredName) < 0) {
       return;
     }
@@ -1947,27 +1952,11 @@ class _LocalReferencesVisitor extends UnifyingAstVisitor2<void> {
   void visitCascadePropertyAssignmentTarget(
     CascadePropertyAssignmentTarget node,
   ) {
-    var readMatches = switch (node.read) {
-      NamedReadResolutionWithElement(:var element) => _matches(element),
-      _ => false,
-    };
-    var writeMatches = switch (node.write) {
-      NamedWriteResolutionWithElement(:var element) => _matches(element),
-      _ => false,
-    };
-    var kind = switch ((readMatches, writeMatches)) {
-      (true, true) => SearchResultKind.READ_WRITE,
-      (true, false) => SearchResultKind.READ,
-      (false, true) => SearchResultKind.WRITE,
-      (false, false) => null,
-    };
-    if (kind != null) {
-      _addResultImpl(node.propertyName, kind, isQualified: true);
-    }
+    _recordNamedAssignmentTarget(node);
   }
 
   @override
-  void visitExtensionOverride(ExtensionOverride node) {
+  void visitExtensionOverride2(ExtensionOverride2 node) {
     node.importPrefix?.accept2(this);
     node.typeArguments?.accept2(this);
     node.argumentList.accept2(this);
@@ -1975,12 +1964,7 @@ class _LocalReferencesVisitor extends UnifyingAstVisitor2<void> {
 
   @override
   void visitForEachPartsWithIdentifier(ForEachPartsWithIdentifier node) {
-    var element = switch (node.write) {
-      InvalidNamedWriteResolution(:var candidates) =>
-        candidates.isEmpty ? null : candidates.first,
-      NamedWriteResolutionWithElement(:var element) => element,
-      _ => null,
-    };
+    var element = node.write?.elementOrRecovery;
     if (elements.contains(element)) {
       _addResultImpl(
         node.identifier2,
@@ -1996,33 +1980,7 @@ class _LocalReferencesVisitor extends UnifyingAstVisitor2<void> {
     ImportPrefixedAssignmentTarget node,
   ) {
     node.importPrefix.accept2(this);
-    var readMatches = switch (node.read) {
-      NamedReadResolutionWithElement(:var element) => _matches(element),
-      _ => false,
-    };
-    var writeMatches = switch (node.write) {
-      NamedWriteResolutionWithElement(:var element) => _matches(element),
-      _ => false,
-    };
-
-    var kind = switch ((readMatches, writeMatches)) {
-      (true, true) => SearchResultKind.READ_WRITE,
-      (true, false) => SearchResultKind.READ,
-      (false, true) => SearchResultKind.WRITE,
-      (false, false) => null,
-    };
-
-    if (kind == null) {
-      if (node.write case InvalidNamedWriteResolution(:var candidates)) {
-        if (candidates.any(_matches)) {
-          kind = SearchResultKind.REFERENCE;
-        }
-      }
-    }
-
-    if (kind != null) {
-      _addResultImpl(node.name, kind, isQualified: true);
-    }
+    _recordNamedAssignmentTarget(node);
   }
 
   @override
@@ -2077,24 +2035,7 @@ class _LocalReferencesVisitor extends UnifyingAstVisitor2<void> {
   void visitReceiverPropertyAssignmentTarget(
     ReceiverPropertyAssignmentTarget node,
   ) {
-    var readMatches = switch (node.read) {
-      NamedReadResolutionWithElement(:var element) => _matches(element),
-      _ => false,
-    };
-    var writeMatches = switch (node.write) {
-      NamedWriteResolutionWithElement(:var element) => _matches(element),
-      _ => false,
-    };
-
-    var kind = switch ((readMatches, writeMatches)) {
-      (true, true) => SearchResultKind.READ_WRITE,
-      (true, false) => SearchResultKind.READ,
-      (false, true) => SearchResultKind.WRITE,
-      (false, false) => null,
-    };
-    if (kind != null) {
-      _addResultImpl(node.propertyName, kind, isQualified: true);
-    }
+    _recordNamedAssignmentTarget(node);
     node.receiver.accept2(this);
   }
 
@@ -2131,36 +2072,18 @@ class _LocalReferencesVisitor extends UnifyingAstVisitor2<void> {
   }
 
   @override
+  void visitStaticQualifier(StaticQualifier node) {
+    if (elements.contains(node.element)) {
+      _addResult(node.name, SearchResultKind.REFERENCE);
+    }
+    node.importPrefix?.accept2(this);
+  }
+
+  @override
   void visitUnqualifiedNameAssignmentTarget(
     UnqualifiedNameAssignmentTarget node,
   ) {
-    var readMatches = switch (node.read) {
-      NamedReadResolutionWithElement(:var element) => _matches(element),
-      _ => false,
-    };
-    var writeMatches = switch (node.write) {
-      NamedWriteResolutionWithElement(:var element) => _matches(element),
-      _ => false,
-    };
-
-    var kind = switch ((readMatches, writeMatches)) {
-      (true, true) => SearchResultKind.READ_WRITE,
-      (true, false) => SearchResultKind.READ,
-      (false, true) => SearchResultKind.WRITE,
-      (false, false) => null,
-    };
-
-    if (kind == null) {
-      if (node.write case InvalidNamedWriteResolution(:var candidates)) {
-        if (candidates.any(_matches)) {
-          kind = SearchResultKind.REFERENCE;
-        }
-      }
-    }
-
-    if (kind != null) {
-      _addResult(node, kind);
-    }
+    _recordNamedAssignmentTarget(node);
   }
 
   void _addResult(SyntacticEntity entity, SearchResultKind kind) {
@@ -2193,9 +2116,39 @@ class _LocalReferencesVisitor extends UnifyingAstVisitor2<void> {
     _addResultImpl(token, kind, isQualified: true);
   }
 
-  bool _matches(Element element) =>
+  bool _matches(Element? element) =>
       elements.contains(element) ||
       element is PropertyAccessorElement && elements.contains(element.variable);
+
+  void _recordNamedAssignmentTarget(NamedAssignmentTarget node) {
+    var readMatches = _matches(node.read?.element);
+    var writeMatches = _matches(node.write?.element);
+    var kind = switch ((readMatches, writeMatches)) {
+      (true, true) => SearchResultKind.READ_WRITE,
+      (true, false) => SearchResultKind.READ,
+      (false, true) => SearchResultKind.WRITE,
+      (false, false) => null,
+    };
+
+    // Property targets currently report selected operations only.
+    if (kind == null &&
+        (node is UnqualifiedNameAssignmentTarget ||
+            node is ImportPrefixedAssignmentTarget)) {
+      if (node.write case InvalidNamedWriteResolution(:var recoveryElement)) {
+        if (_matches(recoveryElement)) {
+          kind = SearchResultKind.REFERENCE;
+        }
+      }
+    }
+
+    if (kind != null) {
+      if (node is UnqualifiedNameAssignmentTarget) {
+        _addResult(node, kind);
+      } else {
+        _addResultImpl(node.name, kind, isQualified: true);
+      }
+    }
+  }
 
   void _visitNamedFunctionInvocation(NamedFunctionInvocation node) {
     var element = switch (node.resolution) {
@@ -2231,8 +2184,10 @@ class _LocalReferencesVisitor extends UnifyingAstVisitor2<void> {
       case ExecutableTearOffResolutionImpl resolution:
         element = resolution.element;
         kind = SearchResultKind.REFERENCE;
-      case InvalidNamedReadResolutionImpl(recovery: var recovery?):
-        element = recovery.element;
+      case InvalidNamedReadResolutionImpl(
+        recoveryElement: var recoveryElement?,
+      ):
+        element = recoveryElement;
         kind = SearchResultKind.REFERENCE;
       case DynamicPropertyReadResolutionImpl():
       case FunctionCallTearOffResolutionImpl():

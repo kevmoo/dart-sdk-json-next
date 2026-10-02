@@ -600,7 +600,7 @@ class ClassElementImpl extends InterfaceElementImpl implements ClassElement {
               ),
             )
           : null;
-      constructorSelector?.name.element = superConstructor.baseElement;
+      constructorSelector?.element = superConstructor.baseElement;
       var superInvocation = SuperConstructorInvocationImpl(
         superKeyword: Tokens.super_(),
         constructorSelector: constructorSelector,
@@ -839,11 +839,7 @@ class ConstructorElementImpl extends ExecutableElementImpl
   String get displayName {
     var className = enclosingElement.name ?? '<null>';
     var name = this.name ?? '<null>';
-    if (name != 'new') {
-      return '$className.$name';
-    } else {
-      return className;
-    }
+    return '$className.$name';
   }
 
   @override
@@ -1179,13 +1175,9 @@ class ConstructorFragmentImpl extends ExecutableFragmentImpl
 
   @override
   String get displayName {
-    var className = enclosingFragment.name;
+    var className = enclosingFragment.name ?? '<null>';
     var name = this.name;
-    if (name != 'new') {
-      return '$className.$name';
-    } else {
-      return className ?? '<null>';
-    }
+    return '$className.$name';
   }
 
   @override
@@ -8145,9 +8137,7 @@ class LibraryFragmentImpl extends FragmentImpl
           var importedLibrary = importElement.importedLibrary;
           if (importedLibrary == null ||
               importedLibrary.isOriginNotExistingFile) {
-            var showCombinators = importElement.combinators
-                .whereType<ShowElementCombinator>()
-                .toList();
+            var showCombinators = importElement.showCombinators.toList();
             if (prefix != null && showCombinators.isEmpty) {
               return true;
             }
@@ -9347,7 +9337,7 @@ class MultiplyDefinedElementImpl extends ElementImpl
     this.libraryFragment,
     this.name,
     this.conflictingElements,
-  );
+  ) : assert(conflictingElements.isNotEmpty);
 
   @override
   MultiplyDefinedElementImpl get baseElement => this;

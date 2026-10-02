@@ -71,10 +71,17 @@ class ModulePrinter {
   /// not.
   final ModulePrintSettings settings;
 
+  final _sourceFileCache = <Uri, List<String>?>{};
+
   ModulePrinter(this._module, {this.settings = const ModulePrintSettings()});
 
   IrPrinter newIrPrinter() => IrPrinter._(
     settings.preferMultiline,
+    settings.printSourcePositions,
+    settings.printUrl,
+    settings.scrubAbsoluteUris,
+    settings.sourceFileProvider,
+    _sourceFileCache,
     _module,
     typeNamer,
     globalNamer,
@@ -329,6 +336,7 @@ class ModulePrinter {
       printOrdered(_module.memories.defined, memoryNamer, _memories);
       printOrdered(_module.tables.imported, tableNamer, _tables);
       printOrdered(_module.tables.defined, tableNamer, _tables);
+      printOrdered(_module.tags.imported, tagNamer, _tags);
       printOrdered(_module.tags.defined, tagNamer, _tags);
       printOrdered(_module.globals.defined, globalNamer, _globals);
 
@@ -424,6 +432,8 @@ class ModulePrinter {
   }
 }
 
+typedef SourceFileProvider = List<String>? Function(Uri uri);
+
 class ModulePrintSettings {
   final List<RegExp> functionFilters;
   final List<RegExp> tableFilters;
@@ -432,6 +442,9 @@ class ModulePrintSettings {
   final bool preferMultiline;
   final bool scrubAbsoluteUris;
   final bool printInSortedOrder;
+  final bool printSourcePositions;
+  final bool printUrl;
+  final SourceFileProvider? sourceFileProvider;
 
   const ModulePrintSettings({
     this.functionFilters = const [],
@@ -441,6 +454,9 @@ class ModulePrintSettings {
     this.preferMultiline = false,
     this.scrubAbsoluteUris = false,
     this.printInSortedOrder = false,
+    this.printSourcePositions = false,
+    this.printUrl = true,
+    this.sourceFileProvider,
   });
 
   bool printFunctionBody(String name) {
@@ -545,6 +561,11 @@ class IndentPrinter {
 
 class IrPrinter extends IndentPrinter {
   final bool preferMultiline;
+  final bool printSourcePositions;
+  final bool _printUrl;
+  final bool _scrubAbsoluteUris;
+  final SourceFileProvider? _sourceFileProvider;
+  final Map<Uri, List<String>?> _sourceFileCache;
   final ir.Module module;
 
   final TypeNamer _typeNamer;
@@ -558,8 +579,17 @@ class IrPrinter extends IndentPrinter {
   _LocalNamer? _localNamer;
   final _labelNamer = _LabelNamer();
 
+  Uri? _lastPrintedFileUri;
+  int? _lastPrintedLine;
+  int? _lastPrintedCol;
+
   IrPrinter._(
     this.preferMultiline,
+    this.printSourcePositions,
+    this._printUrl,
+    this._scrubAbsoluteUris,
+    this._sourceFileProvider,
+    this._sourceFileCache,
     this.module,
     this._typeNamer,
     this._globalNamer,
@@ -574,6 +604,11 @@ class IrPrinter extends IndentPrinter {
   /// empty text content and no local namer.
   IrPrinter dup() => IrPrinter._(
     preferMultiline,
+    printSourcePositions,
+    _printUrl,
+    _scrubAbsoluteUris,
+    _sourceFileProvider,
+    _sourceFileCache,
     module,
     _typeNamer,
     _globalNamer,
@@ -583,6 +618,58 @@ class IrPrinter extends IndentPrinter {
     _dataNamer,
     _memoryNamer,
   );
+
+  List<String>? getSourceLines(Uri uri) {
+    return _sourceFileCache.putIfAbsent(
+      uri,
+      () => _sourceFileProvider?.call(uri),
+    );
+  }
+
+  void printSourcePosition(Uri fileUri, int line, int col) {
+    final lineChanged =
+        fileUri != _lastPrintedFileUri || line != _lastPrintedLine;
+    final colChanged = col != _lastPrintedCol;
+    if (!lineChanged && !colChanged) return;
+
+    _lastPrintedFileUri = fileUri;
+    _lastPrintedLine = line;
+    _lastPrintedCol = col;
+
+    final lines = getSourceLines(fileUri);
+    String filePath = _scrubAbsoluteUris
+        ? _sanitizeAbsoluteFileUris(fileUri.toString())
+        : (fileUri.isScheme('file')
+              ? fileUri.toFilePath()
+              : fileUri.toString());
+
+    if (lines != null && line >= 0 && line < lines.length) {
+      final sourceLine = lines[line];
+      final colOffset = col.clamp(0, sourceLine.length);
+      final before = sourceLine.substring(0, colOffset);
+      final after = sourceLine.substring(colOffset).trimRight();
+      final sourceSnippet = '$before🎯$after';
+      write(';; ');
+      if (_printUrl && lineChanged) {
+        write(sourceSnippet);
+        write(' ' * (40 - sourceSnippet.length - 2 * _indent));
+        writeln(' $filePath:${line + 1}');
+      } else {
+        writeln(sourceSnippet);
+      }
+    } else {
+      writeln(';; $filePath:${line + 1}:${col + 1}');
+    }
+  }
+
+  void printUnmapped() {
+    if (_lastPrintedFileUri != null) {
+      writeln(';; <unmapped>');
+    }
+    _lastPrintedFileUri = null;
+    _lastPrintedLine = null;
+    _lastPrintedCol = null;
+  }
 
   void beginLabeledBlock(ir.Instruction? instruction) {
     _labelNamer.stack.add(LabelInfo(instruction));

@@ -673,10 +673,7 @@ required super.metadata,''');
         case _PropertyTypeKindNode():
           var name = property.name;
           if (property.v1Name != null) {
-            buffer.writeln('_becomeParentOf2($name);');
-            buffer.writeln(
-              '_becomeParentOf1(${property.projectToV1Code(name)});',
-            );
+            buffer.writeln('_becomeParentOf2AndExisting1($name);');
           } else {
             buffer.writeln('${implClass.api.becomeParentMethod}($name);');
           }
@@ -964,9 +961,7 @@ ${property.typeCode} get $propertyName => _$propertyName;
           var setterBody = property.v1Name == null
               ? '_$propertyName = '
                     '${implClass.api.becomeParentMethod}($propertyName);'
-              : '_$propertyName = _becomeParentOf2($propertyName);\n'
-                    '_becomeParentOf1('
-                    '${property.projectToV1Code(propertyName)});';
+              : '_$propertyName = _becomeParentOf2AndExisting1($propertyName);';
           buffer.write('''
 \n@generated
 $setterAnnotations
@@ -983,7 +978,7 @@ set $propertyName(${property.typeCode} $propertyName) {
 \n@generated
 $v1ApiAnnotations
 @override
-${property.typeCode} get $v1Name => $projectedValue;
+${property.typeCode} get $v1Name => _becomeParentOf1($projectedValue);
 ''');
           }
         }
@@ -1832,8 +1827,6 @@ class _Property {
       _V1ProjectionKind.collectionElement =>
         'V1Projection.toV1CollectionElement',
       _V1ProjectionKind.combinatorName => 'V1Projection.toV1CombinatorName',
-      _V1ProjectionKind.commentReferableExpression =>
-        'V1Projection.toV1CommentReferableExpression',
       _V1ProjectionKind.expression => 'V1Projection.toV1Expression',
       _V1ProjectionKind.recordLiteralField =>
         'V1Projection.toV1RecordLiteralField',
@@ -1863,7 +1856,6 @@ class _Property {
       _V1ProjectionKind.argument ||
       _V1ProjectionKind.collectionElement ||
       _V1ProjectionKind.combinatorName ||
-      _V1ProjectionKind.commentReferableExpression ||
       _V1ProjectionKind.expression ||
       _V1ProjectionKind.recordLiteralField =>
         '$v1ProjectionMethod($expression)',
@@ -1933,8 +1925,6 @@ class _PropertyTypeKindNodeList extends _PropertyTypeKind {
       'Argument' => _V1ProjectionKind.argument,
       'CollectionElement' => _V1ProjectionKind.collectionElement,
       'CombinatorName' => _V1ProjectionKind.combinatorName,
-      'CommentReferableExpression' =>
-        _V1ProjectionKind.commentReferableExpression,
       'Expression' => _V1ProjectionKind.expression,
       'RecordLiteralField' => _V1ProjectionKind.recordLiteralField,
       _ => null,
@@ -1964,7 +1954,6 @@ enum _V1ProjectionKind {
   argument,
   collectionElement,
   combinatorName,
-  commentReferableExpression,
   expression,
   recordLiteralField,
 }

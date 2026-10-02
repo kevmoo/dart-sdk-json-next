@@ -714,25 +714,6 @@ class _IndexContributor extends UnifyingAstVisitor2 {
   }
 
   @override
-  void visitAssignmentExpression(AssignmentExpression node) {
-    recordOperatorReference(node.operator, node.element);
-    // TODO(scheglov): Remove this compensation when all compound assignment
-    // targets use `AssignmentTarget`. Traversing the left-hand side records
-    // only its write element, so record the getter invocation here.
-    if (node.readElement case GetterElement element) {
-      if (_accessName(node.leftHandSide2) case var name?) {
-        recordRelation(
-          element,
-          IndexRelationKind.IS_INVOKED_BY,
-          name,
-          _isQualified(name),
-        );
-      }
-    }
-    super.visitAssignmentExpression(node);
-  }
-
-  @override
   void visitBinaryOperatorInvocation(BinaryOperatorInvocation node) {
     recordOperatorReference(node.operator, node.element);
     super.visitBinaryOperatorInvocation(node);
@@ -803,44 +784,31 @@ class _IndexContributor extends UnifyingAstVisitor2 {
   }
 
   @override
-  visitCommentReference(CommentReference node) {
-    var expression = node.expression2;
-    if (expression is Identifier) {
-      var element = expression.element;
-      if (element is ConstructorElement) {
-        if (expression is PrefixedIdentifier) {
-          var offset = expression.prefix.end;
-          var length = expression.end - offset;
-          recordRelationOffset(
-            element,
-            IndexRelationKind.IS_REFERENCED_BY,
-            offset,
-            length,
-            true,
-          );
-          return;
-        } else {
-          var offset = expression.end;
-          recordRelationOffset(
-            element,
-            IndexRelationKind.IS_REFERENCED_BY,
-            offset,
-            0,
-            true,
-          );
-          return;
-        }
-      }
-    } else if (expression is PropertyAccess) {
-      // Nothing to do?
-    } else {
-      throw UnimplementedError(
-        'Unhandled CommentReference expression type: '
-        '${expression.runtimeType}',
-      );
+  void visitCommentReferenceComponent(CommentReferenceComponent node) {
+    var isQualified = node.period != null;
+    switch (node.element) {
+      case null:
+        assembler.addNameRelation(
+          node.name.lexeme,
+          IndexRelationKind.IS_READ_BY,
+          node.name.offset,
+          isQualified,
+        );
+      case ConstructorElement element:
+        recordRelationToken(
+          element,
+          IndexRelationKind.IS_REFERENCED_BY_CONSTRUCTOR_COMMENT_REFERENCE,
+          node.name,
+          isQualified: isQualified,
+        );
+      case var element:
+        recordRelationToken(
+          element,
+          IndexRelationKind.IS_REFERENCED_BY,
+          node.name,
+          isQualified: isQualified,
+        );
     }
-
-    return super.visitCommentReference(node);
   }
 
   @override
@@ -848,9 +816,13 @@ class _IndexContributor extends UnifyingAstVisitor2 {
     recordOperatorReference(node.operator, node.element);
     switch (node.target as AssignmentTargetImpl) {
       case PropertyAssignmentTargetImpl target:
-        _recordPropertyReadWriteTarget(target);
+        _recordNamedPropertyReadWriteTarget(target);
       case IndexAssignmentTargetImpl target:
         _recordIndexReadWriteTarget(target);
+      case ParsedAssignmentTargetImpl():
+        throw StateError('Parsed assignment target was not lowered');
+      case InvalidExtensionOverrideAssignmentTargetImpl():
+      case InvalidSuperAssignmentTargetImpl():
       case InvalidExpressionAssignmentTargetImpl():
       case ImportPrefixedAssignmentTargetImpl():
         break;
@@ -962,19 +934,30 @@ class _IndexContributor extends UnifyingAstVisitor2 {
             recordRelation(
               element,
               IndexRelationKind.IS_INVOKED_BY,
-              target.propertyName,
+              target.name,
+              true,
+            );
+          case InvalidNamedWriteResolutionImpl(recoveryElement: var element?):
+            recordRelation(
+              element,
+              IndexRelationKind.IS_REFERENCED_BY,
+              target.name,
               true,
             );
           default:
             assembler.addNameRelation(
-              target.propertyName.lexeme,
+              target.name.lexeme,
               IndexRelationKind.IS_WRITTEN_BY,
-              target.propertyName.offset,
-              false,
+              target.name.offset,
+              true,
             );
         }
       case IndexAssignmentTargetImpl target:
         _recordIndexReadWriteTarget(target);
+      case ParsedAssignmentTargetImpl():
+        throw StateError('Parsed assignment target was not lowered');
+      case InvalidExtensionOverrideAssignmentTargetImpl():
+      case InvalidSuperAssignmentTargetImpl():
       case InvalidExpressionAssignmentTargetImpl():
       case ImportPrefixedAssignmentTargetImpl():
         break;
@@ -994,16 +977,13 @@ class _IndexContributor extends UnifyingAstVisitor2 {
               target,
               false,
             );
-          case InvalidNamedWriteResolutionImpl(:var candidates)
-              when candidates.isNotEmpty:
-            for (var element in candidates) {
-              recordRelation(
-                element,
-                IndexRelationKind.IS_REFERENCED_BY,
-                target,
-                false,
-              );
-            }
+          case InvalidNamedWriteResolutionImpl(recoveryElement: var element?):
+            recordRelation(
+              element,
+              IndexRelationKind.IS_REFERENCED_BY,
+              target,
+              false,
+            );
           default:
             assembler.addNameRelation(
               target.name.lexeme,
@@ -1014,20 +994,6 @@ class _IndexContributor extends UnifyingAstVisitor2 {
         }
     }
     super.visitDirectAssignment(node);
-  }
-
-  @override
-  void visitDotShorthandConstructorInvocation(
-    DotShorthandConstructorInvocation node,
-  ) {
-    var element = node.element?.baseElement.actualConstructor;
-    recordRelation(
-      element,
-      IndexRelationKind.IS_INVOKED_BY_DOT_SHORTHANDS_CONSTRUCTOR,
-      node.constructorName,
-      true,
-    );
-    node.argumentList.accept2(this);
   }
 
   @override
@@ -1043,31 +1009,6 @@ class _IndexContributor extends UnifyingAstVisitor2 {
     );
     node.typeArguments?.accept2(this);
     node.argumentList.accept2(this);
-  }
-
-  @override
-  void visitDotShorthandInvocation(DotShorthandInvocation node) {
-    var name = node.memberName;
-    var element = name.element;
-    recordRelation(element, IndexRelationKind.IS_INVOKED_BY, name, true);
-    node.typeArguments?.accept2(this);
-    node.argumentList.accept2(this);
-  }
-
-  @override
-  void visitDotShorthandPropertyAccess(DotShorthandPropertyAccess node) {
-    IndexRelationKind kind;
-    var element = node.propertyName.element;
-    if (element is InternalConstructorElement) {
-      element = element.actualConstructor;
-      kind =
-          IndexRelationKind.IS_REFERENCED_BY_DOT_SHORTHAND_CONSTRUCTOR_TEAR_OFF;
-    } else if (element is GetterElement || element is SetterElement) {
-      kind = IndexRelationKind.IS_INVOKED_BY;
-    } else {
-      kind = IndexRelationKind.IS_REFERENCED_BY;
-    }
-    recordRelation(element, kind, node.propertyName, true);
   }
 
   @override
@@ -1132,7 +1073,7 @@ class _IndexContributor extends UnifyingAstVisitor2 {
   }
 
   @override
-  visitExtensionOverride(ExtensionOverride node) {
+  visitExtensionOverride2(ExtensionOverride2 node) {
     _recordImportPrefixedElement(
       importPrefix: node.importPrefix,
       name: node.name,
@@ -1201,9 +1142,13 @@ class _IndexContributor extends UnifyingAstVisitor2 {
   void visitIfNullAssignment(IfNullAssignment node) {
     switch (node.target as AssignmentTargetImpl) {
       case PropertyAssignmentTargetImpl target:
-        _recordPropertyReadWriteTarget(target);
+        _recordNamedPropertyReadWriteTarget(target);
       case IndexAssignmentTargetImpl target:
         _recordIndexReadWriteTarget(target);
+      case ParsedAssignmentTargetImpl():
+        throw StateError('Parsed assignment target was not lowered');
+      case InvalidExtensionOverrideAssignmentTargetImpl():
+      case InvalidSuperAssignmentTargetImpl():
       case InvalidExpressionAssignmentTargetImpl():
       case ImportPrefixedAssignmentTargetImpl():
         break;
@@ -1241,11 +1186,7 @@ class _IndexContributor extends UnifyingAstVisitor2 {
     covariant ImportPrefixedAssignmentTargetImpl node,
   ) {
     if (node.hasRead) {
-      _recordNamedPropertyReadWriteTarget(
-        propertyName: node.name,
-        read: node.read,
-        write: node.write,
-      );
+      _recordNamedPropertyReadWriteTarget(node);
     } else {
       switch (node.write) {
         case SetterInvocationResolutionImpl(:var element):
@@ -1254,15 +1195,12 @@ class _IndexContributor extends UnifyingAstVisitor2 {
             IndexRelationKind.IS_INVOKED_BY,
             node.name,
           );
-        case InvalidNamedWriteResolutionImpl(:var candidates)
-            when candidates.isNotEmpty:
-          for (var element in candidates) {
-            recordRelationToken(
-              element,
-              IndexRelationKind.IS_REFERENCED_BY,
-              node.name,
-            );
-          }
+        case InvalidNamedWriteResolutionImpl(recoveryElement: var element?):
+          recordRelationToken(
+            element,
+            IndexRelationKind.IS_REFERENCED_BY,
+            node.name,
+          );
         default:
           assembler.addNameRelation(
             node.name.lexeme,
@@ -1282,9 +1220,13 @@ class _IndexContributor extends UnifyingAstVisitor2 {
     recordOperatorReference(node.operator, node.element);
     switch (node.target) {
       case PropertyAssignmentTargetImpl target:
-        _recordPropertyReadWriteTarget(target);
+        _recordNamedPropertyReadWriteTarget(target);
       case IndexAssignmentTargetImpl target:
         _recordIndexReadWriteTarget(target);
+      case ParsedAssignmentTargetImpl():
+        throw StateError('Parsed assignment target was not lowered');
+      case InvalidExtensionOverrideAssignmentTargetImpl():
+      case InvalidSuperAssignmentTargetImpl():
       case InvalidExpressionAssignmentTargetImpl():
       case ImportPrefixedAssignmentTargetImpl():
         break;
@@ -1295,38 +1237,9 @@ class _IndexContributor extends UnifyingAstVisitor2 {
   }
 
   @override
-  void visitIndexExpression(IndexExpression node) {
-    var element = node.writeOrReadElement2;
-    if (element is MethodElement) {
-      Token operator = node.leftBracket;
-      recordRelationToken(element, IndexRelationKind.IS_INVOKED_BY, operator);
-    }
-    super.visitIndexExpression(node);
-  }
-
-  @override
   void visitLabelReference(LabelReference node) {
     var element = node.element;
     recordRelation(element, IndexRelationKind.IS_REFERENCED_BY, node, false);
-  }
-
-  @override
-  void visitMethodInvocation(MethodInvocation node) {
-    SimpleIdentifier name = node.methodName;
-    var element = name.element;
-    // unresolved name invocation
-    bool isQualified = node.realTarget2 != null;
-    if (element == null) {
-      recordNameRelation(name, IndexRelationKind.IS_INVOKED_BY, isQualified);
-    }
-    // element invocation
-    IndexRelationKind kind = element is InterfaceElement
-        ? IndexRelationKind.IS_REFERENCED_BY
-        : IndexRelationKind.IS_INVOKED_BY;
-    recordRelation(element, kind, name, isQualified);
-    node.target2?.accept2(this);
-    node.typeArguments?.accept2(this);
-    node.argumentList.accept2(this);
   }
 
   @override
@@ -1533,6 +1446,15 @@ class _IndexContributor extends UnifyingAstVisitor2 {
   }
 
   @override
+  void visitStaticQualifier(StaticQualifier node) {
+    _recordImportPrefixedElement(
+      importPrefix: node.importPrefix,
+      name: node.name,
+      element: node.element,
+    );
+  }
+
+  @override
   void visitSuperConstructorInvocation(SuperConstructorInvocation node) {
     var element = node.element;
     if (node.constructorSelector case var selector?) {
@@ -1590,15 +1512,6 @@ class _IndexContributor extends UnifyingAstVisitor2 {
       recordSuperType(namedType, IndexRelationKind.IS_MIXED_IN_BY);
       namedType.accept2(this);
     }
-  }
-
-  SimpleIdentifier? _accessName(Expression expression) {
-    return switch (expression) {
-      SimpleIdentifier() => expression,
-      PrefixedIdentifier() => expression.identifier,
-      PropertyAccess() => expression.propertyName,
-      _ => null,
-    };
   }
 
   /// Record the given class as a subclass of its direct superclasses.
@@ -1762,45 +1675,27 @@ class _IndexContributor extends UnifyingAstVisitor2 {
     }
   }
 
-  void _recordNamedPropertyReadWriteTarget({
-    required Token propertyName,
-    required NamedReadResolutionImpl? read,
-    required NamedWriteResolutionImpl? write,
-  }) {
+  void _recordNamedPropertyReadWriteTarget(NamedAssignmentTarget node) {
+    var name = node.name;
     var hasRelation = false;
-    switch (read) {
+    switch (node.read) {
       case GetterInvocationResolutionImpl(:var element):
-        recordRelation(
-          element,
-          IndexRelationKind.IS_INVOKED_BY,
-          propertyName,
-          true,
-        );
+        recordRelation(element, IndexRelationKind.IS_INVOKED_BY, name, true);
         hasRelation = true;
       case ExecutableTearOffResolutionImpl(:var element):
-        recordRelation(
-          element,
-          IndexRelationKind.IS_REFERENCED_BY,
-          propertyName,
-          true,
-        );
+        recordRelation(element, IndexRelationKind.IS_REFERENCED_BY, name, true);
         hasRelation = true;
       default:
     }
-    if (write case SetterInvocationResolutionImpl(:var element)) {
-      recordRelation(
-        element,
-        IndexRelationKind.IS_INVOKED_BY,
-        propertyName,
-        true,
-      );
+    if (node.write case SetterInvocationResolutionImpl(:var element)) {
+      recordRelation(element, IndexRelationKind.IS_INVOKED_BY, name, true);
       hasRelation = true;
     }
     if (!hasRelation) {
       assembler.addNameRelation(
-        propertyName.lexeme,
+        name.lexeme,
         IndexRelationKind.IS_READ_WRITTEN_BY,
-        propertyName.offset,
+        name.offset,
         true,
       );
     }
@@ -1827,8 +1722,10 @@ class _IndexContributor extends UnifyingAstVisitor2 {
           kind = IndexRelationKind
               .IS_REFERENCED_BY_DOT_SHORTHAND_CONSTRUCTOR_TEAR_OFF;
         }
-      case InvalidNamedReadResolutionImpl(recovery: var recovery?):
-        element = recovery.element;
+      case InvalidNamedReadResolutionImpl(
+        recoveryElement: var recoveryElement?,
+      ):
+        element = recoveryElement;
         kind = IndexRelationKind.IS_REFERENCED_BY;
       case DynamicPropertyReadResolutionImpl():
       case FunctionCallTearOffResolutionImpl():
@@ -1850,14 +1747,6 @@ class _IndexContributor extends UnifyingAstVisitor2 {
         isQualified,
       );
     }
-  }
-
-  void _recordPropertyReadWriteTarget(PropertyAssignmentTargetImpl target) {
-    _recordNamedPropertyReadWriteTarget(
-      propertyName: target.propertyName,
-      read: target.read,
-      write: target.write,
-    );
   }
 
   void _recordUnqualifiedNameReadWriteTarget(
@@ -1908,14 +1797,7 @@ class _IndexContributor extends UnifyingAstVisitor2 {
   }
 
   void _visitIndexExpression2(IndexExpression2 node) {
-    var element = switch (node.resolution) {
-      MethodIndexReadResolution(:var element) => element,
-      InvalidIndexReadResolution(
-        recovery: MethodIndexReadResolution(:var element),
-      ) =>
-        element,
-      _ => null,
-    };
+    var element = node.resolution?.elementOrRecovery;
     if (element is MethodElement) {
       recordRelationToken(
         element,

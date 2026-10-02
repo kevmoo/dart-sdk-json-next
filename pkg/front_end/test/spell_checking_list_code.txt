@@ -32,6 +32,7 @@ acov
 across
 activated
 actively
+acts
 adequate
 adi
 adjusts
@@ -67,6 +68,7 @@ analyzes
 android
 annagrin
 annotate
+announced
 ansi
 answering
 answers
@@ -87,6 +89,7 @@ architectures
 area
 arg
 args
+argument's
 arise
 arising
 arity
@@ -264,6 +267,7 @@ channel
 char
 charcode
 chars
+cheap
 checkout
 checkpoint
 checksum
@@ -323,6 +327,7 @@ communicate
 communicates
 communicating
 communication
+commutative
 compared
 compares
 compilations
@@ -368,6 +373,7 @@ constant's
 constitute
 constness
 constraining
+construct's
 consult
 consulted
 consumers
@@ -475,6 +481,7 @@ delim
 delimit
 delimiting
 delivered
+deltas
 demands
 demangle
 demangled
@@ -507,6 +514,7 @@ destroy
 destructive
 destructure
 destructuring
+detach
 deterministic
 dev
 developed
@@ -529,6 +537,7 @@ dirname
 dirtify
 dirtifying
 dirty
+disables
 disagrees
 disallow
 disambiguating
@@ -823,6 +832,7 @@ hang
 happening
 happy
 hardcode
+harmless
 harmonize
 harness
 hashes
@@ -856,6 +866,7 @@ html
 https
 human
 hvar
+hypothesized
 i
 i'll
 i'm
@@ -1050,6 +1061,7 @@ layout
 lc
 ld
 leafp
+learns
 leeway
 left's
 legitimately
@@ -1142,6 +1154,7 @@ mc
 md
 me
 meanings
+meantime
 meeting
 merely
 mess
@@ -1199,6 +1212,7 @@ nanosecond
 native\$
 natively
 nativewrappers
+natural
 nbsp
 nc
 ncs
@@ -1268,6 +1282,7 @@ ogham
 okay
 oked
 omitting
+onwards
 op
 opens
 operate
@@ -1360,6 +1375,7 @@ pkgs
 placement
 play
 player
+plays
 plugin
 plugins
 plural
@@ -1470,6 +1486,7 @@ quad
 qualify
 quantified
 queries
+queryable
 questions
 quick
 quit
@@ -1566,6 +1583,7 @@ refutable
 reg
 regard
 regenerations
+region's
 regis
 registering
 rehash
@@ -1582,6 +1600,7 @@ relativize
 relax
 relaxes
 released
+reliable
 reliably
 relink
 reload
@@ -1805,6 +1824,8 @@ spend
 spent
 spin
 spite
+splice
+spliced
 splitting
 spots
 spurious

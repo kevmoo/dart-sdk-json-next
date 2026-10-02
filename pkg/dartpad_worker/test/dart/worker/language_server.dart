@@ -60,11 +60,13 @@ void main() {
     });
 
     await diagnosticsQueue.emitsThrough(
-      (e) => e.isA<Map>()['diagnostics'].isA<List>().any(
-        (d) => d.isA<Map>()['message'].isA<String>().contains(
-          'Expected to find \';\'',
+      .it()
+        ..isA<Map>()['diagnostics'].isA<List>().any(
+          .it()
+            ..isA<Map>()['message'].isA<String>().contains(
+              'Expected to find \';\'',
+            ),
         ),
-      ),
     );
 
     await ls.stop();
@@ -144,7 +146,7 @@ void main() {
     });
 
     await diagnosticsQueue.emitsThrough(
-      (e) => e.isA<Map>()['diagnostics'].isA<List>().isNotEmpty(),
+      .it()..isA<Map>()['diagnostics'].isA<List>().isNotEmpty,
     );
 
     // Fix it
@@ -156,7 +158,7 @@ void main() {
     });
 
     await diagnosticsQueue.emitsThrough(
-      (e) => e.isA<Map>()['diagnostics'].isA<List>().isEmpty(),
+      .it()..isA<Map>()['diagnostics'].isA<List>().isEmpty,
     );
 
     await ls.stop();
@@ -200,10 +202,11 @@ linter:
       });
 
       await diagnosticsQueue.emitsThrough(
-        (e) => e.isA<Map>()['diagnostics'].isA<List>().any(
-          (d) =>
-              d.isA<Map>()['code'].isA<String>().equals('prefer_single_quotes'),
-        ),
+        .it()
+          ..isA<Map>()['diagnostics'].isA<List>().any(
+            .it()
+              ..isA<Map>()['code'].isA<String>().equals('prefer_single_quotes'),
+          ),
       );
     } finally {
       await ls.stop();
@@ -257,9 +260,10 @@ linter:
       });
 
       check(codeActions).isA<List>().any(
-        (action) => action.isA<Map>()['title'].isA<String>().contains(
-          'Convert to expression body',
-        ),
+        .it()
+          ..isA<Map>()['title'].isA<String>().contains(
+            'Convert to expression body',
+          ),
       );
     } finally {
       await ls.stop();
@@ -334,12 +338,76 @@ linter:
       });
 
       check(codeActions).isA<List>().any(
-        (action) => action.isA<Map>()['title'].isA<String>().contains(
-          'Convert to single quoted string',
-        ),
+        .it()
+          ..isA<Map>()['title'].isA<String>().contains(
+            'Convert to single quoted string',
+          ),
       );
     } finally {
       await ls.stop();
     }
   });
+
+  testDartWorkspace(
+    'analyzes dart:js_interop and dart:typed_data without missing types',
+    (ws) async {
+      final ls = await ws.startLanguageServer();
+      try {
+        final lsp = Peer.withoutJson(ls.languageServerChannel);
+        unawaited(lsp.listen());
+
+        await lsp.sendRequest('initialize', {
+          'processId': null,
+          'rootUri': ws.workspaceFolder.toString(),
+          'capabilities': {
+            'textDocument': {
+              'publishDiagnostics': <String, Object?>{},
+              'hover': {
+                'contentFormat': ['plaintext'],
+              },
+            },
+          },
+        });
+        lsp.sendNotification('initialized', {});
+
+        final fileUri = ws.workspaceFolder.resolve('main.dart');
+        const code = '''
+import 'dart:js_interop';
+import 'dart:typed_data';
+
+@JS('console.log')
+external void _log(JSAny? value);
+
+void main() {
+  final obj = JSObject();
+  final bytes = Uint8List(4).toJS;
+  _log(obj);
+  _log(bytes);
+}
+''';
+        await ws.writeFileFromText('main.dart', code);
+
+        lsp.sendNotification('textDocument/didOpen', {
+          'textDocument': {
+            'uri': fileUri.toString(),
+            'languageId': 'dart',
+            'version': 1,
+            'text': code,
+          },
+        });
+
+        // Verify hover on `bytes` resolves `JSUint8Array` (backed by
+        // `dart:_native_typed_data` in `lib/_internal/js_runtime/`).
+        final hover = await lsp.sendRequest('textDocument/hover', {
+          'textDocument': {'uri': fileUri.toString()},
+          'position': {'line': 8, 'character': 9},
+        });
+        check(hover).isA<Map>()['contents'].isA<Map>()['value'].isA<String>()
+          ..contains('JSUint8Array')
+          ..contains('bytes');
+      } finally {
+        await ls.stop();
+      }
+    },
+  );
 }
