@@ -1843,10 +1843,13 @@ void testMultiRootFormatException() {
   reader.beginObject();
   Expect.equals('a', reader.nextName());
   Expect.equals(1, reader.readInt());
-  reader.endObject();
 
-  // Reading another root token after document root must throw FormatException (not StateError)
-  Expect.throws<FormatException>(() => reader.readNum());
+  // Trailing content after the document root must surface as a
+  // FormatException (not a StateError) from the call that completes the root.
+  Expect.throws<FormatException>(
+    () => reader.endObject(),
+    (e) => e.message.contains('after root value'),
+  );
 }
 
 void testJsonKeyOptionsCollisionsAndDuplicates() {

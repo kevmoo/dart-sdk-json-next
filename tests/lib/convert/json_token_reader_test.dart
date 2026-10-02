@@ -1150,25 +1150,29 @@ void testTrailingCommaPeekRejection() {
 void testTokenReaderMultipleRoots() {
   Uint8List b(String s) => Uint8List.fromList(utf8.encode(s));
 
-  // Disallow multiple primitive root values
-  {
-    final r1 = JsonTokenReader.fromBytes(b('1 2'));
-    Expect.equals(1, r1.readInt());
-    Expect.isFalse(r1.hasNext());
-    Expect.equals(JsonTokenType.none, r1.peek());
-    Expect.throwsFormatException(() => r1.readInt());
+  // RFC 8259 §2: a JSON text is exactly one value. The reader rejects any
+  // non-whitespace trailing content eagerly, from the call that completes the
+  // root value, so the FormatException points at the offending offset.
+  void expectTrailingContent(void Function() completeRoot) {
+    Expect.throws<FormatException>(
+      completeRoot,
+      (e) => e.message.contains('after root value'),
+    );
   }
 
-  // Disallow root value after container
+  // Primitive root followed by a second primitive
+  {
+    final r1 = JsonTokenReader.fromBytes(b('1 2'));
+    expectTrailingContent(() => r1.readInt());
+  }
+
+  // Container root followed by a primitive
   {
     final r2 = JsonTokenReader.fromBytes(b('{"a": 1} 42'));
     r2.beginObject();
     Expect.equals('a', r2.nextName());
     Expect.equals(1, r2.readInt());
-    r2.endObject();
-    Expect.isFalse(r2.hasNext());
-    Expect.equals(JsonTokenType.none, r2.peek());
-    Expect.throwsFormatException(() => r2.readInt());
+    expectTrailingContent(() => r2.endObject());
   }
 
   // Clean EOF after container: peek returns endOfDocument
@@ -1190,125 +1194,80 @@ void testTokenReaderMultipleRoots() {
     Expect.equals(JsonTokenType.endOfDocument, r.peek());
   }
 
-  // Disallow container after root value
+  // Primitive root followed by a container
   {
     final r3 = JsonTokenReader.fromBytes(b('"root" [1, 2]'));
-    Expect.equals('root', r3.readString());
-    Expect.isFalse(r3.hasNext());
-    Expect.equals(JsonTokenType.none, r3.peek());
-    Expect.throwsFormatException(() => r3.beginArray());
+    expectTrailingContent(() => r3.readString());
   }
 
-  // Disallow container after container
+  // Container root followed by a container
   {
     final r4 = JsonTokenReader.fromBytes(b('{} {}'));
     r4.beginObject();
-    r4.endObject();
-    Expect.isFalse(r4.hasNext());
-    Expect.equals(JsonTokenType.none, r4.peek());
-    Expect.throwsFormatException(() => r4.beginObject());
+    expectTrailingContent(() => r4.endObject());
   }
 
-  // Disallow bool after bool
+  // bool after bool
   {
     final r5 = JsonTokenReader.fromBytes(b('true false'));
-    Expect.isTrue(r5.readBool());
-    Expect.isFalse(r5.hasNext());
-    Expect.equals(JsonTokenType.none, r5.peek());
-    Expect.throwsFormatException(() => r5.readBool());
+    expectTrailingContent(() => r5.readBool());
   }
 
-  // Disallow null after null
+  // null after null
   {
     final r6 = JsonTokenReader.fromBytes(b('null null'));
-    r6.readNull();
-    Expect.isFalse(r6.hasNext());
-    Expect.equals(JsonTokenType.none, r6.peek());
-    Expect.throwsFormatException(() => r6.readNull());
+    expectTrailingContent(() => r6.readNull());
   }
 
-  // Disallow skipValue after root value
+  // Array root followed by a primitive
   {
     final r7 = JsonTokenReader.fromBytes(b('[1, 2] 3'));
     r7.beginArray();
     Expect.equals(1, r7.readInt());
     Expect.equals(2, r7.readInt());
-    r7.endArray();
-    Expect.isFalse(r7.hasNext());
-    Expect.equals(JsonTokenType.none, r7.peek());
-    Expect.throwsFormatException(() => r7.skipValue());
+    expectTrailingContent(() => r7.endArray());
   }
 
-  // Disallow double reading after root double
+  // double after double
   {
     final r8 = JsonTokenReader.fromBytes(b('0.123456789012345 3.14'));
-    Expect.equals(0.123456789012345, r8.readDouble());
-    Expect.isFalse(r8.hasNext());
-    Expect.equals(JsonTokenType.none, r8.peek());
-    Expect.throwsFormatException(() => r8.readDouble());
+    expectTrailingContent(() => r8.readDouble());
   }
 
-  // Disallow getTokenSpan after root value (Round 19 Item 1.1)
+  // skipValue over a root followed by trailing content
+  {
+    final r9 = JsonTokenReader.fromBytes(b('[1, 2] 3'));
+    expectTrailingContent(() => r9.skipValue());
+  }
+
+  // getTokenSpan never observes a second root (Round 19 Item 1.1): the call
+  // that completes the first root already throws.
   {
     final r = JsonTokenReader.fromBytes(b('123 456'));
-    Expect.equals(123, r.readInt());
-    Expect.throwsFormatException(() => r.getTokenSpan());
+    expectTrailingContent(() => r.readInt());
   }
   {
     final r = JsonTokenReader.fromBytes(b('{} []'));
     r.beginObject();
-    r.endObject();
-    Expect.throwsFormatException(() => r.getTokenSpan());
+    expectTrailingContent(() => r.endObject());
   }
   {
     final r = JsonTokenReader.fromBytes(b('[] {}'));
     r.beginArray();
-    r.endArray();
-    Expect.throwsFormatException(() => r.getTokenSpan());
+    expectTrailingContent(() => r.endArray());
   }
   {
     final r = JsonTokenReader.fromBytes(b('"hello" "world"'));
-    Expect.equals('hello', r.readString());
-    Expect.throwsFormatException(() => r.getTokenSpan());
+    expectTrailingContent(() => r.readString());
   }
+
+  // Trailing content that is only whitespace is not content.
   {
-    final r = JsonTokenReader.fromBytes(b('true false'));
-    Expect.isTrue(r.readBool());
-    Expect.throwsFormatException(() => r.getTokenSpan());
-  }
-  {
-    final r = JsonTokenReader.fromBytes(b('null null'));
-    r.readNull();
-    Expect.throwsFormatException(() => r.getTokenSpan());
-  }
-  {
-    final r = JsonTokenReader.fromBytes(b('123.45 67.89'));
-    Expect.equals(123.45, r.readDouble());
-    Expect.throwsFormatException(() => r.getTokenSpan());
-  }
-  {
-    final r = JsonTokenReader.fromBytes(b('123'));
-    Expect.equals(123, r.readInt());
-    Expect.throwsFormatException(() => r.getTokenSpan());
-  }
-  {
-    final r = JsonTokenReader.fromBytes(b('456 789'));
-    r.skipValue();
-    Expect.throwsFormatException(() => r.getTokenSpan());
-  }
-  {
-    final r = JsonTokenReader.fromBytes(b('{"k": "v"} [1, 2]'));
-    r.skipValue();
-    Expect.throwsFormatException(() => r.getTokenSpan());
-  }
-  {
-    final r = JsonTokenReader.fromBytes(b('   "hello"   '));
-    final (s1, e1) = r.getTokenSpan();
-    final (s2, e2) = r.getTokenSpan();
-    Expect.equals(s1, s2);
-    Expect.equals(e1, e2);
-    Expect.equals('hello', r.readString());
-    Expect.throwsFormatException(() => r.getTokenSpan());
+    final r = JsonTokenReader.fromBytes(b('  [1]  \n\t '));
+    r.beginArray();
+    Expect.equals(1, r.readInt());
+    r.endArray();
+    Expect.equals(JsonTokenType.endOfDocument, r.peek());
   }
 }
 

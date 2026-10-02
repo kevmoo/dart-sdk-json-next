@@ -3425,8 +3425,7 @@ class _JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
-        _offset = j;
+        _completeRootValue(j);
       }
 
       return (start, end);
@@ -3515,8 +3514,7 @@ class _JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
-        _offset = j;
+        _completeRootValue(j);
       }
       return _decodeCachedString(start, end);
     } catch (_) {
@@ -3602,8 +3600,7 @@ class _JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
-        _offset = j;
+        _completeRootValue(j);
       }
 
       if (!hasEscapes && maxByte <= 0x7F) {
@@ -3799,8 +3796,7 @@ class _JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
-        _offset = j;
+        _completeRootValue(j);
       }
 
       return val;
@@ -3970,8 +3966,7 @@ class _JsonTokenReader {
           _offset = j;
         }
       } else {
-        _hasReadRoot = true;
-        _offset = j;
+        _completeRootValue(j);
       }
 
       if (mantissa == 0) {
