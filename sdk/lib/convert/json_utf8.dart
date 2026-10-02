@@ -1834,7 +1834,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   JsonTokenType peek() {
     final _len = _bytes.length;
     var i = _offset;
@@ -1959,7 +1958,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   void beginObject() {
     _beforeReadingValue();
     if (_offset < _bytes.length && _bytes[_offset] == 123) {
@@ -1987,7 +1985,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   void endObject() {
     _skipWs();
     if (_stackLength == 0 || _topType != 0) {
@@ -2020,7 +2017,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   void beginArray() {
     _beforeReadingValue();
     if (_offset < _bytes.length && _bytes[_offset] == 91) {
@@ -2048,7 +2044,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   void endArray() {
     _skipWs();
     if (_stackLength == 0 || _topType != 1) {
@@ -2091,7 +2086,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   bool hasNext() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2306,7 +2300,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   String nextName() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2330,7 +2323,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   int selectName(JsonKeyOptions options) {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2421,7 +2413,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   int selectString(JsonKeyOptions options) {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2480,7 +2471,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   (int start, int end) readStringSpan() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2534,7 +2524,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   String readString() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2595,7 +2584,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   int readInt() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2692,7 +2680,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   double readDouble() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2876,7 +2863,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   num readNum() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2902,7 +2888,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   bool readBool() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2926,7 +2911,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   void readNull() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
@@ -2952,7 +2936,6 @@ final class _JsonTokenReader implements JsonTokenReader {
 
   @override
   @pragma('vm:prefer-inline')
-  @pragma('wasm:prefer-inline')
   void skipValue() {
     final initialOffset = _offset;
     final initialStackLen = _stackLength;
