@@ -120,6 +120,9 @@ class DtdServices {
       _server.instrumentationService.logInfo(
         'Error closing DTD connection:\n$error\n$stack',
       );
+      _server.sessionLogger.logInfo(
+        'Error closing DTD connection:\n$error\n$stack',
+      );
     }
   }
 
@@ -201,7 +204,16 @@ class DtdServices {
     _server.instrumentationService.logError(
       ['Failed to connect to/initialize DTD:', error, ?stack].join('\n'),
     );
-
+    if (error != null && stack is StackTrace?) {
+      _server.sessionLogger.logException(
+        exception: [
+          'Failed to connect to/initialize DTD:',
+          error,
+          ?stack,
+        ].join('\n'),
+        stackTrace: stack,
+      );
+    }
     _close(DtdConnectionState.error);
   }
 

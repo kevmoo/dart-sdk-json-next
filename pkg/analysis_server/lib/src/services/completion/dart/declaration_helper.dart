@@ -491,7 +491,8 @@ class DeclarationHelper {
       }
     }
     if (topLevelMember != null && !mustBeStatic && !mustBeType) {
-      var thisType = node.thisTypeAt(offset);
+      // ignore: experimental_member_use
+      var thisType = request.unit.lookupThisType(offset: offset);
       _addInheritedMembers(topLevelMember, thisType);
     }
   }
@@ -2118,12 +2119,15 @@ class DeclarationHelper {
       importData: importData,
     );
 
-    // Use the constructor element's name without the interface type to
-    // calculate the matcher score for dot shorthands.
+    // Match the source spelling: dot shorthands use the constructor name,
+    // while ordinary unnamed constructor invocations use the class name.
     var elementName = element.name;
-    var matcherName = suggestingDotShorthand && elementName != null
-        ? elementName
-        : element.displayName;
+    var matcherName = element.displayName;
+    if (suggestingDotShorthand && elementName != null) {
+      matcherName = elementName;
+    } else if (elementName == 'new') {
+      matcherName = element.enclosingElement.displayName;
+    }
 
     // TODO(keertip): Compute the completion string.
     var matcherScore = state.matcher.score(matcherName);
@@ -3244,25 +3248,6 @@ enum ThisPrefix {
   final String? text;
 
   new(this.text);
-}
-
-extension on AstNode {
-  /// Returns the type of `this` at the given [offset].
-  ///
-  /// Assumes that the receiver is inside the same function body as the
-  /// [offset].
-  DartType? thisTypeAt(int offset) {
-    FunctionBody? outermostFunctionBody;
-    AstNode? currentNode = this;
-    while (currentNode != null) {
-      if (currentNode is FunctionBody) {
-        outermostFunctionBody = currentNode;
-      }
-      currentNode = currentNode.parent;
-    }
-    // ignore: experimental_member_use
-    return outermostFunctionBody?.lookupPromotedThisType(offset: offset);
-  }
 }
 
 extension on GetterElement {

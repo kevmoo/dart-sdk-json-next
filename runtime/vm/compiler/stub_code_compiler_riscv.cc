@@ -391,6 +391,7 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   }
 
   Label tail;
+  ASSERT_EQUAL(target::CallbackMetadata::kCall, 0);
   __ bnez(T3, &tail, Assembler::kNearJump);
 
   {
@@ -444,6 +445,10 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
   }
 #endif
 #endif
+}
+
+void StubCodeCompiler::GenerateInterpretedFfiCallbackTrampolineStub() {
+  __ Breakpoint();  // currently only used in ARM64 runtimes.
 }
 
 void StubCodeCompiler::GenerateDispatchTableNullErrorStub() {

@@ -158,10 +158,8 @@ final class Workspace {
       _request('workspace/writeFileFromText', {'uri': uri, 'text': text});
 
   /// Write [bytes] to file at [uri] in this workspace.
-  Future<void> writeFileFromBytes(String uri, Uint8List bytes) => _request(
-    'workspace/writeFileFromBytes',
-    {'uri': uri, 'base64': base64.encode(bytes)},
-  );
+  Future<void> writeFileFromBytes(String uri, Uint8List bytes) =>
+      _request('workspace/writeFileFromBytes', {'uri': uri, 'bytes': bytes});
 
   /// Read file at [uri] in this workspace as UTF-8 string.
   Future<String> readFileAsText(String uri) async {
@@ -176,21 +174,19 @@ final class Workspace {
     final result = await _request<Map>('workspace/readFileAsBytes', {
       'uri': uri,
     });
-    return base64.decode(result['base64'] as String);
+    return result['bytes'] as Uint8List;
   }
 
   /// Extract [tarArchive] into folder at [uri] in this workspace.
-  Future<void> importTarArchive(String uri, Uint8List tarArchive) => _request(
-    'workspace/importTarArchive',
-    {'uri': uri, 'base64': base64.encode(tarArchive)},
-  );
+  Future<void> importTarArchive(String uri, Uint8List tarArchive) =>
+      _request('workspace/importTarArchive', {'uri': uri, 'bytes': tarArchive});
 
   /// Export files from [uri] in this workspace to a tar-archive.
   Future<Uint8List> exportTarArchive(String uri) async {
     final result = await _request<Map>('workspace/exportTarArchive', {
       'uri': uri,
     });
-    return base64.decode(result['base64'] as String);
+    return result['bytes'] as Uint8List;
   }
 
   /// Delete file or folder at [uri] in this workspace.
@@ -555,6 +551,11 @@ final class Sandbox {
   /// `'bin/main.dart'` or `'lib/main.dart'`).
   ///
   /// The [mode] must be one of the supported [modes].
+  ///
+  /// This may only be called **once** per [Sandbox]. Use [hotReload] or
+  /// [hotRestart] to run modified code, and create a new [Sandbox] (with a new
+  /// [SandboxedIframe]) to run a different program. Calling [run] again throws
+  /// [InvalidSandboxStateException].
   ///
   /// {@macro run_modes}
   Future<({String log})> run(String path, {required String mode}) async {

@@ -525,6 +525,8 @@ import 'invocation_of_extension_without_call_test.dart'
     as invocation_of_extension_without_call;
 import 'invocation_of_non_function_expression_test.dart'
     as invocation_of_non_function_expression;
+import 'js_interop_extension_constructor_js_annotation_has_no_effect_test.dart'
+    as js_interop_extension_constructor_js_annotation_has_no_effect;
 import 'label_in_outer_scope_test.dart' as label_in_outer_scope;
 import 'label_undefined_test.dart' as label_undefined;
 import 'late_final_local_already_assigned_test.dart'
@@ -596,6 +598,8 @@ import 'mixin_with_non_class_superclass_test.dart'
     as mixin_with_non_class_superclass;
 import 'mixins_super_class_test.dart' as mixins_super_class;
 import 'mock_sdk_test.dart' as mock_sdk;
+import 'multiple_combinators_deprecated_test.dart'
+    as multiple_combinators_deprecated;
 import 'multiple_combinators_test.dart' as multiple_combinators;
 import 'multiple_redirecting_constructor_invocations_test.dart'
     as multiple_redirecting_constructor_invocations;
@@ -1292,6 +1296,7 @@ main() {
     invalid_widget_preview_private_argument.main();
     invocation_of_extension_without_call.main();
     invocation_of_non_function_expression.main();
+    js_interop_extension_constructor_js_annotation_has_no_effect.main();
     label_in_outer_scope.main();
     label_undefined.main();
     late_final_local_already_assigned.main();
@@ -1337,6 +1342,7 @@ main() {
     mixin_with_non_class_superclass.main();
     mixins_super_class.main();
     mock_sdk.main();
+    multiple_combinators_deprecated.main();
     multiple_combinators.main();
     multiple_redirecting_constructor_invocations.main();
     multiple_super_initializers.main();

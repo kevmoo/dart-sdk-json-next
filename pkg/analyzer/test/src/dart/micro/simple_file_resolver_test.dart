@@ -1138,6 +1138,24 @@ void f() {
     expect(result, unorderedEquals(expected));
   }
 
+  test_findReferences_constructor_primary_unnamed() async {
+    var a = newFile('$testPackageLibPath/a.dart', r'''
+class A(int x) {}
+void f() {
+  A(0);
+}
+''');
+    var resolved = await resolveFile(a);
+    var element = resolved.libraryElement.getClass('A')!.unnamedConstructor!;
+    var result = await fileResolver.findReferences(element);
+    expect(result, [
+      CiderSearchMatch(a.path, [
+        CiderSearchInfo(CharacterLocation(1, 8), 0, MatchKind.DECLARATION),
+        CiderSearchInfo(CharacterLocation(3, 4), 0, MatchKind.INVOCATION),
+      ]),
+    ]);
+  }
+
   test_findReferences_field() async {
     var a = newFile('/workspace/dart/test/lib/a.dart', r'''
 class A {
@@ -1976,7 +1994,9 @@ void f(A a) {
 
     var result = await resolveTestFile();
     {
-      var element = result.findNode.simple('foo();').element!;
+      var invocation = result.findNode.receiverMethodInvocation('foo();');
+      var element =
+          (invocation.resolution as ExecutableInvocationResolution).element;
       expect(element.firstFragment.nameOffset, 17);
     }
 
@@ -1985,7 +2005,9 @@ void f(A a) {
     createFileResolver();
     result = await resolveTestFile();
     {
-      var element = result.findNode.simple('foo();').element!;
+      var invocation = result.findNode.receiverMethodInvocation('foo();');
+      var element =
+          (invocation.resolution as ExecutableInvocationResolution).element;
       expect(element.firstFragment.nameOffset, 17);
     }
   }

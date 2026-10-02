@@ -6,6 +6,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/file_system/memory_file_system.dart';
@@ -19,11 +20,11 @@ import 'resource_provider/resource_provider_ext.dart';
 import 'resource_provider/resource_provider_wrap_cwd.dart';
 import 'shared.dart' hide FileSystemException;
 import 'tools/file_watch.dart';
-import 'tools/hot_reload_compiler.dart' show HotReloadCompiler;
+import 'tools/frontend_server_compiler.dart' show FrontendServerCompiler;
 import 'tools/language_server.dart';
 import 'tools/pub.dart';
 import 'tools/sandbox.dart';
-import 'util/message_port.dart';
+import 'util/parameters_ext.dart';
 
 final class Worker {
   final ResourceProvider _rp;
@@ -263,7 +264,7 @@ class _Workspace {
 
   Object? _writeFileFromBytes(Parameters params) async {
     final path = _resolvePath(params['uri'].asUri);
-    final bytes = base64.decode(params['base64'].asString);
+    final bytes = params.bytesAsUint8List;
     try {
       final file = _rp.getFile(path);
       file.parent.createRecursively();
@@ -292,7 +293,7 @@ class _Workspace {
   Object? _readFileAsBytes(Parameters params) async {
     final path = _resolvePath(params['uri'].asUri);
     try {
-      return {'base64': base64.encode(_rp.getFile(path).readAsBytesSync())};
+      return {'bytes': _rp.getFile(path).readAsBytesSync()};
     } on FileSystemException catch (e) {
       throw FileNotFoundException(
         e.message,
@@ -386,7 +387,7 @@ class _Workspace {
 
   Object? _importTarArchive(Parameters params) async {
     final path = _resolvePath(params['uri'].asUri);
-    final bytes = base64.decode(params['base64'].asString);
+    final bytes = params.bytesAsUint8List;
 
     await _rp.getFolder(path).extractTarStream(Stream.value(bytes));
 
@@ -404,7 +405,7 @@ class _Workspace {
     }
 
     return {
-      'base64': base64.encode(await collectBytes(folder.createTarStream())),
+      'bytes': Uint8List.fromList(await collectBytes(folder.createTarStream())),
     };
   }
 
@@ -524,7 +525,7 @@ class _Workspace {
     return <String, Object?>{};
   }
 
-  HotReloadCompiler _createCompiler(Uri path, DartPadRunMode mode) {
+  FrontendServerCompiler _createCompiler(Uri path, DartPadRunMode mode) {
     var entrypoint = _resolvePath(path);
 
     // Test if the file we're compiling exists.
@@ -547,18 +548,13 @@ class _Workspace {
         entrypoint,
         content: entrypointWrapperTemplate.replaceAll(
           '{{entrypoint}}',
-          // Convert to a `file:` URI so the Common Front End (CFE) treats the
-          // import as an absolute file URI. Otherwise, entrypoints inside
-          // `lib/` match the package root prefix in `package_config.json` and
-          // resolve relatively, causing duplicated path segments and build
-          // failure.
-          _rp.pathContext.toUri(originalEntrypoint).toString(),
+          _rp.pathContext.basename(originalEntrypoint),
         ),
         modificationStamp: 0,
       );
     }
 
-    return HotReloadCompiler(
+    return FrontendServerCompiler(
       resourceProvider: rp,
       packageConfig: _findPackageConfigFromEntrypoint(entrypoint),
       targetPath: entrypoint,
@@ -567,10 +563,7 @@ class _Workspace {
   }
 
   Object? _connectSandbox(Parameters params) async {
-    final port = params['port'].value;
-    if (port is! MessagePort) {
-      throw RpcException.invalidParams('port must be a MessagePort');
-    }
+    final port = params.portAsMessagePort;
     final sandboxId = _worker._nextSandboxId++;
     final sandbox = _sandboxes[sandboxId] = Sandbox(
       port: port,

@@ -86,8 +86,11 @@ Arguments createArguments(
   List<NamedExpression>? named,
   required int fileOffset,
 }) {
-  return new Arguments(positional, types: types, named: named)
-    ..fileOffset = fileOffset;
+  return new Arguments(
+    positional,
+    types: types == null ? null : new DartTypeList.from(types),
+    named: named,
+  )..fileOffset = fileOffset;
 }
 
 Arguments createArgumentsForwarded(
@@ -651,6 +654,7 @@ Field createImmutableField(
   bool isFinal = false,
   bool isConst = false,
   bool isStatic = false,
+  bool isCovariantByDeclaration = false,
   required Uri fileUri,
   Reference? fieldReference,
   Reference? getterReference,
@@ -665,6 +669,7 @@ Field createImmutableField(
       isFinal: isFinal,
       isConst: isConst,
       isStatic: isStatic,
+      isCovariantByDeclaration: isCovariantByDeclaration,
       fileUri: fileUri,
       fieldReference: fieldReference,
       getterReference: getterReference,
@@ -767,7 +772,8 @@ Instantiation createInstantiation(
   List<DartType> typeArguments, {
   required int fileOffset,
 }) {
-  return new Instantiation(expression, typeArguments)..fileOffset = fileOffset;
+  return new Instantiation(expression, new DartTypeList.from(typeArguments))
+    ..fileOffset = fileOffset;
 }
 
 /// Creates an integer literal of [value].
@@ -1096,6 +1102,8 @@ Field createMutableField(
   bool isLate = false,
   bool isFinal = false,
   bool isStatic = false,
+  bool isCovariantByDeclaration = false,
+  bool isCovariantByClass = false,
   required Uri fileUri,
   Reference? fieldReference,
   Reference? getterReference,
@@ -1110,6 +1118,8 @@ Field createMutableField(
       isLate: isLate,
       isFinal: isFinal,
       isStatic: isStatic,
+      isCovariantByDeclaration: isCovariantByDeclaration,
+      isCovariantByClass: isCovariantByClass,
       fileUri: fileUri,
       fieldReference: fieldReference,
       getterReference: getterReference,
@@ -1435,7 +1445,9 @@ RelationalPattern createRelationalPattern({
     accessKind: accessKind,
     name: name,
     target: target,
-    typeArguments: typeArguments,
+    typeArguments: typeArguments == null
+        ? null
+        : new DartTypeList.from(typeArguments),
     functionType: functionType,
   )..fileOffset = fileOffset;
 }
@@ -1619,8 +1631,11 @@ TypedefTearOff createTypedefTearOff({
   required List<DartType> typeArguments,
   required int fileOffset,
 }) {
-  return new TypedefTearOff(structuralParameters, expression, typeArguments)
-    ..fileOffset = fileOffset;
+  return new TypedefTearOff(
+    new StructuralParameterList.from(structuralParameters),
+    expression,
+    new DartTypeList.from(typeArguments),
+  )..fileOffset = fileOffset;
 }
 
 TypeLiteral createTypeLiteral(DartType type, {required int fileOffset}) {

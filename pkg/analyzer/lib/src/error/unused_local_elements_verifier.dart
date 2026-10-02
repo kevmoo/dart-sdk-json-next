@@ -47,13 +47,6 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
   }
 
   @override
-  void visitAssignmentExpression(AssignmentExpression node) {
-    var element = node.element;
-    usedElements.addMember(element);
-    super.visitAssignmentExpression(node);
-  }
-
-  @override
   void visitBinaryOperatorInvocation(BinaryOperatorInvocation node) {
     var element = node.element;
     usedElements.addMember(element);
@@ -181,43 +174,22 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
   @override
   void visitDirectAssignment(DirectAssignment node) {
     var target = node.target;
-    if (target case IndexAssignmentTarget(
-      write: MethodIndexWriteResolution(:var element),
-    )) {
+    var write = target.write;
+    if (write case MethodIndexWriteResolution(:var element)) {
       _useAssignmentTargetElement(element);
       super.visitDirectAssignment(node);
       return;
     }
-    var write = switch (target) {
-      PropertyAssignmentTarget(:var write) => write,
-      UnqualifiedNameAssignmentTarget(:var write) => write,
-      ImportPrefixedAssignmentTarget(:var write) => write,
-      _ => null,
-    };
-    if (write case InvalidNamedWriteResolution(:var candidates)) {
-      for (var candidate in candidates) {
-        candidate = candidate.baseElement;
-        _useIdentifierElement(candidate);
-      }
+    if (write case InvalidNamedWriteResolution(:var recoveryElement)) {
+      _useIdentifierElement(recoveryElement?.baseElement);
       super.visitDirectAssignment(node);
       return;
     }
-    if (write is! NamedWriteResolutionWithElement) {
-      super.visitDirectAssignment(node);
-      return;
+    if (write?.element case var element?) {
+      _useAssignmentTargetElement(element);
     }
-    _useAssignmentTargetElement(write.element);
 
     super.visitDirectAssignment(node);
-  }
-
-  @override
-  void visitDotShorthandConstructorInvocation(
-    DotShorthandConstructorInvocation node,
-  ) {
-    usedElements.addElement(node.element?.enclosingElement);
-    _addParametersForArguments(node.argumentList);
-    super.visitDotShorthandConstructorInvocation(node);
   }
 
   @override
@@ -231,22 +203,9 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
   }
 
   @override
-  void visitDotShorthandInvocation(DotShorthandInvocation node) {
-    usedElements.addElement(node.memberName.element?.enclosingElement);
-    _addParametersForArguments(node.argumentList);
-    super.visitDotShorthandInvocation(node);
-  }
-
-  @override
   void visitDotShorthandMethodInvocation(DotShorthandMethodInvocation node) {
     _recordNamedFunctionInvocation(node);
     super.visitDotShorthandMethodInvocation(node);
-  }
-
-  @override
-  void visitDotShorthandPropertyAccess(DotShorthandPropertyAccess node) {
-    usedElements.addElement(node.propertyName.element?.enclosingElement);
-    super.visitDotShorthandPropertyAccess(node);
   }
 
   @override
@@ -322,13 +281,6 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
   }
 
   @override
-  void visitIndexExpression(IndexExpression node) {
-    var element = node.writeOrReadElement2;
-    usedElements.addMember(element);
-    super.visitIndexExpression(node);
-  }
-
-  @override
   void visitIsExpression(IsExpression node) {
     var insideIsExpressionOld = _insideIsExpression;
     node.expression2.accept2(this);
@@ -349,17 +301,6 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
     } finally {
       _enclosingExec = enclosingExecOld;
     }
-  }
-
-  @override
-  void visitMethodInvocation(MethodInvocation node) {
-    var function = node.methodName.element;
-    if (function is LocalFunctionElement ||
-        function is MethodElement ||
-        function is TopLevelFunctionElement) {
-      _addParametersForArguments(node.argumentList);
-    }
-    super.visitMethodInvocation(node);
   }
 
   @override
@@ -478,6 +419,12 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
         }
       }
     }
+  }
+
+  @override
+  void visitStaticQualifier(StaticQualifier node) {
+    _useIdentifierElement(node.element);
+    super.visitStaticQualifier(node);
   }
 
   @override
@@ -626,22 +573,14 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
   }
 
   void _useIndexReadResolution(IndexReadResolution? resolution) {
-    var element = switch (resolution) {
-      MethodIndexReadResolution(:var element) => element,
-      InvalidIndexReadResolution(
-        recovery: MethodIndexReadResolution(:var element),
-      ) =>
-        element,
-      _ => null,
-    };
-    usedElements.addMember(element);
+    usedElements.addMember(resolution?.elementOrRecovery);
   }
 
   void _useNamedReadResolution(
     NamedReadResolution? read, {
     required bool readCountsAsUse,
   }) {
-    if (read case NamedReadResolutionWithElement(:var element)) {
+    if (read?.element case var element?) {
       element = element.baseElement;
       var variable = element.tryCast<PropertyAccessorElement>()?.variable;
       if (element is PropertyAccessorElement &&
@@ -687,35 +626,18 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
     AssignmentTarget target, {
     required bool readCountsAsUse,
   }) {
-    var indexResolutions = switch (target) {
-      IndexAssignmentTarget(:var read, :var write) => (read, write),
-      _ => null,
-    };
-    if (indexResolutions case (var read, var write)) {
-      if (read case MethodIndexReadResolution(:var element)) {
+    switch (target.read) {
+      case MethodIndexReadResolution(:var element):
         _useAssignmentTargetElement(element);
-      }
-      if (write case MethodIndexWriteResolution(:var element)) {
-        _useAssignmentTargetElement(element);
-      }
-      return;
+      case NamedReadResolution read:
+        _useNamedReadResolution(read, readCountsAsUse: readCountsAsUse);
+      default:
     }
-    var read = switch (target) {
-      PropertyAssignmentTarget(:var read) => read,
-      UnqualifiedNameAssignmentTarget(:var read) => read,
-      ImportPrefixedAssignmentTarget(:var read) => read,
-      _ => null,
-    };
-    var write = switch (target) {
-      PropertyAssignmentTarget(:var write) => write,
-      UnqualifiedNameAssignmentTarget(:var write) => write,
-      ImportPrefixedAssignmentTarget(:var write) => write,
-      _ => null,
-    };
-
-    _useNamedReadResolution(read, readCountsAsUse: readCountsAsUse);
-
-    if (write case NamedWriteResolutionWithElement(:var element)) {
+    var write = target.write;
+    if (write case MethodIndexWriteResolution(:var element)) {
+      _useAssignmentTargetElement(element);
+    }
+    if (write case NamedWriteResolution(element: var element?)) {
       element = element.baseElement;
       if (element is! LocalVariableElement) {
         _useIdentifierElement(element);
@@ -730,11 +652,13 @@ class GatherUsedLocalElementsVisitor extends UnifyingAstVisitor2<void> {
   }
 
   void _visitNameExpression(NameExpression node) {
+    if (node is PropertyExtraction &&
+        node.resolution?.elementOrRecovery == null) {
+      usedElements.unresolvedReadMembers.add(node.name.lexeme);
+    }
     // The omitted qualifier also refers to the enclosing declaration.
-    if (node case DotShorthandNameExpression(
-      resolution: NamedReadResolutionWithElement(:var element),
-    )) {
-      usedElements.addElement(element.enclosingElement);
+    if (node is DotShorthandNameExpression) {
+      usedElements.addElement(node.resolution?.element?.enclosingElement);
     }
 
     _useNamedReadResolution(

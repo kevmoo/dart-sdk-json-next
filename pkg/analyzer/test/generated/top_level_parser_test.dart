@@ -78,12 +78,27 @@ CompilationUnit
                 fieldName(v1): SimpleIdentifier
                   token: a
                 equals: =
-                expression2: MethodInvocation
+                expression2: ParsedValueArguments
+                  operand: ParsedUnqualifiedName
+                    name: f
+                  argumentList: ArgumentList
+                    leftParenthesis: (
+                    arguments2
+                      FunctionExpression
+                        parameters: FormalParameterList
+                          leftParenthesis: (
+                          rightParenthesis: )
+                        body: BlockFunctionBody
+                          block: Block
+                            leftBracket: {
+                            rightBracket: }
+                    rightParenthesis: )
+                expression(v1): MethodInvocation
                   methodName: SimpleIdentifier
                     token: f
                   argumentList: ArgumentList
                     leftParenthesis: (
-                    arguments2
+                    arguments
                       FunctionExpression
                         parameters: FormalParameterList
                           leftParenthesis: (
@@ -132,8 +147,8 @@ CompilationUnit
                   token: a
                 equals: =
                 expression2: ReceiverIndexExpression
-                  receiver: SimpleIdentifier
-                    token: x
+                  receiver: ParsedUnqualifiedName
+                    name: x
                   leftBracket: [
                   index: FunctionExpression
                     parameters: FormalParameterList
@@ -405,6 +420,8 @@ CompilationUnit
   void test_import_show_hide() {
     var parseResult = parseTestCodeWithDiagnostics(r'''
 import 'import1_lib.dart' show hide, show hide ugly;
+//                                        ^^^^
+// [diag.multipleCombinators] At most one 'show' or 'hide' combinator can be used on an import or export directive.
 ''');
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
@@ -1341,7 +1358,9 @@ CompilationUnit
                       contents: "
                     InterpolationExpression
                       leftBracket: ${
-                      expression2: SimpleIdentifier
+                      expression2: ParsedUnqualifiedName
+                        name: n
+                      expression(v1): SimpleIdentifier
                         token: n
                       rightBracket: }
                     InterpolationString
@@ -3341,6 +3360,8 @@ CompilationUnit
   void test_parseExportDirective_hide_show() {
     var parseResult = parseTestCodeWithDiagnostics(r'''
 export 'lib/lib.dart' hide A show B;
+//                           ^^^^
+// [diag.multipleCombinators] At most one 'show' or 'hide' combinator can be used on an import or export directive.
 ''');
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
@@ -3419,6 +3440,8 @@ CompilationUnit
   void test_parseExportDirective_show_hide() {
     var parseResult = parseTestCodeWithDiagnostics(r'''
 export 'lib/lib.dart' show B hide A;
+//                           ^^^^
+// [diag.multipleCombinators] At most one 'show' or 'hide' combinator can be used on an import or export directive.
 ''');
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
@@ -4546,6 +4569,8 @@ CompilationUnit
   void test_parseImportDirective_prefix_hide_show() {
     var parseResult = parseTestCodeWithDiagnostics(r'''
 import 'lib/lib.dart' as a hide A show B;
+//                                ^^^^
+// [diag.multipleCombinators] At most one 'show' or 'hide' combinator can be used on an import or export directive.
 ''');
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
@@ -4583,6 +4608,8 @@ CompilationUnit
   void test_parseImportDirective_prefix_show_hide() {
     var parseResult = parseTestCodeWithDiagnostics(r'''
 import 'lib/lib.dart' as a show B hide A;
+//                                ^^^^
+// [diag.multipleCombinators] At most one 'show' or 'hide' combinator can be used on an import or export directive.
 ''');
     var node = parseResult.findNode.unit;
     assertParsedNodeText(node, r'''
@@ -4871,7 +4898,9 @@ CompilationUnit
             name: g
             body: ExpressionFunctionBody
               functionDefinition: =>
-              expression2: SimpleIdentifier
+              expression2: ParsedUnqualifiedName
+                name: f
+              expression(v1): SimpleIdentifier
                 token: f
               semicolon: ;
           MethodDeclaration
@@ -4898,11 +4927,11 @@ CompilationUnit
                 statements
                   ExpressionStatement
                     expression2: DirectAssignment
-                      target: UnqualifiedNameAssignmentTarget
+                      target: ParsedUnqualifiedNameAssignmentTarget
                         name: f
                       operator: =
-                      value: SimpleIdentifier
-                        token: v
+                      value: ParsedUnqualifiedName
+                        name: v
                     expression(v1): AssignmentExpression
                       leftHandSide: SimpleIdentifier
                         token: f
@@ -4933,15 +4962,15 @@ CompilationUnit
             body: ExpressionFunctionBody
               functionDefinition: =>
               expression2: DirectAssignment
-                target: UnqualifiedNameAssignmentTarget
+                target: ParsedUnqualifiedNameAssignmentTarget
                   name: f
                 operator: =
                 value: BinaryOperatorInvocation
-                  leftOperand: SimpleIdentifier
-                    token: f
+                  leftOperand: ParsedUnqualifiedName
+                    name: f
                   operator: +
-                  rightOperand: SimpleIdentifier
-                    token: v
+                  rightOperand: ParsedUnqualifiedName
+                    name: v
                   binaryOperator: add
               expression(v1): AssignmentExpression
                 leftHandSide: SimpleIdentifier

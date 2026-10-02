@@ -15,23 +15,9 @@ class _SuperVisitor extends RecursiveAstVisitor2<void> {
   _SuperVisitor(this.name, this._usage);
 
   @override
-  void visitAssignmentExpression(AssignmentExpression node) {
-    if (_usage == _Usage.writing) {
-      var left = node.leftHandSide2;
-      if (left is PropertyAccess) {
-        if (left.target2 is SuperExpression && left.propertyName.name == name) {
-          hasSuperInvocation = true;
-          return;
-        }
-      }
-    }
-    super.visitAssignmentExpression(node);
-  }
-
-  @override
   void visitBinaryOperatorInvocation(BinaryOperatorInvocation node) {
     if (_usage == _Usage.reading) {
-      if (node.leftOperand is SuperExpression && node.operator.lexeme == name) {
+      if (node.leftOperand is SuperReference && node.operator.lexeme == name) {
         hasSuperInvocation = true;
         return;
       }
@@ -40,14 +26,14 @@ class _SuperVisitor extends RecursiveAstVisitor2<void> {
   }
 
   @override
-  void visitMethodInvocation(MethodInvocation node) {
-    if (_usage == _Usage.reading) {
-      if (node.target2 is SuperExpression && node.methodName.name == name) {
-        hasSuperInvocation = true;
-        return;
-      }
+  void visitParsedNameAccess(ParsedNameAccess node) {
+    if (_usage == _Usage.reading &&
+        node.operand is SuperReference &&
+        node.name.lexeme == name) {
+      hasSuperInvocation = true;
+      return;
     }
-    super.visitMethodInvocation(node);
+    super.visitParsedNameAccess(node);
   }
 
   @override
@@ -64,6 +50,41 @@ class _SuperVisitor extends RecursiveAstVisitor2<void> {
       }
     }
     super.visitPropertyAccess(node);
+  }
+
+  @override
+  void visitReceiverMethodInvocation(ReceiverMethodInvocation node) {
+    if (_usage == _Usage.reading &&
+        node.receiver is SuperReference &&
+        node.name.lexeme == name) {
+      hasSuperInvocation = true;
+      return;
+    }
+    super.visitReceiverMethodInvocation(node);
+  }
+
+  @override
+  void visitReceiverPropertyAssignmentTarget(
+    ReceiverPropertyAssignmentTarget node,
+  ) {
+    if (node.receiver is SuperReference &&
+        node.name.lexeme == name &&
+        (_usage == _Usage.writing || node.hasRead)) {
+      hasSuperInvocation = true;
+      return;
+    }
+    super.visitReceiverPropertyAssignmentTarget(node);
+  }
+
+  @override
+  void visitReceiverPropertyExtraction(ReceiverPropertyExtraction node) {
+    if (_usage == _Usage.reading &&
+        node.receiver is SuperReference &&
+        node.name.lexeme == name) {
+      hasSuperInvocation = true;
+      return;
+    }
+    super.visitReceiverPropertyExtraction(node);
   }
 }
 

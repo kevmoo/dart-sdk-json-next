@@ -23,9 +23,9 @@
 #  * Making cherry-picks to stable channel
 #     - increase PATCH by 1
 #
-CHANNEL main
+CHANNEL dev
 MAJOR 3
 MINOR 14
 PATCH 0
-PRERELEASE 0
+PRERELEASE 271
 PRERELEASE_PATCH 0

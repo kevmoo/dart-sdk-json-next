@@ -23,8 +23,8 @@ extension UriChecks on Subject<Uri> {
 }
 
 extension ResourceChecks on Subject<Resource> {
-  void get exists => has((r) => r.exists, 'exists').isTrue();
-  void get doesNotExist => has((r) => r.exists, 'exists').isFalse();
+  void get exists => has((r) => r.exists, 'exists').isTrue;
+  void get doesNotExist => has((r) => r.exists, 'exists').isFalse;
 }
 
 extension FolderChecks on Subject<Folder> {
@@ -43,20 +43,25 @@ extension DartPadExceptionChecks on Subject<DartPadException> {
   Subject<String> get message => has((e) => e.message, 'message');
 }
 
+extension CompiledModuleChecks on Subject<CompiledModule> {
+  Subject<String> get moduleName => has((m) => m.moduleName, 'moduleName');
+  Subject<String> get code => has((m) => m.code, 'code');
+  Subject<List<String>> get libraries => has((m) => m.libraries, 'libraries');
+}
+
 extension CompileResultChecks on Subject<CompileResult> {
-  Subject<String?> get code => has((s) => s.code, 'code');
+  Subject<List<CompiledModule>> get modules => has((s) => s.modules, 'modules');
 
   Subject<String> get log => has((s) => s.log, 'log');
 
-  Subject<List<String>> get compiledLibraryUris =>
-      has((s) => s.compiledLibraryUris, 'compiledLibraryUris');
-
-  void codeContains(Pattern pattern) => code.isNotNull().contains(pattern);
+  /// Some bundle contains [pattern].
+  void anyModuleContains(Pattern pattern) =>
+      modules.any(.it()..code.contains(pattern));
 
   /// Compilation was successful and logs are empty (indicating no warnings)
   void successEmptyLog() {
-    log.isEmpty();
-    code.isNotNull();
+    log.isEmpty;
+    modules.isNotEmpty;
   }
 }
 
@@ -77,4 +82,38 @@ extension ExtensionEventChecks
     on Subject<({String kind, Map<String, Object?> data})> {
   Subject<String> get kind => has((s) => s.kind, 'kind');
   Subject<Map<String, Object?>> get data => has((s) => s.data, 'data');
+}
+
+extension StringCheckExt on Subject<String> {
+  /// Expect that the value LIKE-matches [pattern].
+  ///
+  ///  * `%`, matching zero or more characters
+  ///    (not newline, unless [ignoreWhitespace] is `true`).
+  ///  * `_`, matches one character.
+  ///
+  /// When [ignoreWhitespace] is `true` all whitespace and newlines are
+  /// collapsed to a single whitespace, this makes it easy to check ordering of
+  /// words.
+  void like(
+    String pattern, {
+    bool caseSensitive = true,
+    bool ignoreWhitespace = false,
+  }) {
+    context.expect(() => ['matches LIKE-pattern `$pattern`'], (actual) {
+      var value = actual;
+      var pat = pattern;
+      if (ignoreWhitespace) {
+        value = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+        pat = pat.replaceAll(RegExp(r'\s+'), ' ').trim();
+      }
+
+      final p = RegExp.escape(pat).replaceAll('%', '.*').replaceAll('_', '.');
+      final re = RegExp('^$p\$', caseSensitive: caseSensitive);
+
+      if (re.hasMatch(value)) {
+        return null;
+      }
+      return Rejection(which: ['Did not match pattern']);
+    });
+  }
 }

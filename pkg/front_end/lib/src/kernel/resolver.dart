@@ -226,14 +226,20 @@ class Resolver {
         fileOffset: fileOffset,
         hasInferredTypeArguments: false,
       );
+      InternalThisVariable? internalThisVariable = bodyBuilderContext
+          .createInternalThisVariable();
       ExpressionInferenceResult inferenceResult = context.typeInferrer
           .inferFieldInitializer(
             fileUri: fileUri,
             declaredType: const UnknownType(),
             initializer: internalInitializer,
             inferenceDefaultType: InferenceDefaultType.Dynamic,
-            internalThisVariable: bodyBuilderContext
-                .createInternalThisVariable(),
+            internalThisVariable: internalThisVariable,
+            thisType:
+                internalThisVariable
+                    // Coverage-ignore(suite): Not run.
+                    ?.type ??
+                bodyBuilderContext.thisType,
           )
           .expressionInferenceResult;
       initializer = inferenceResult.expression;
@@ -251,7 +257,7 @@ class Resolver {
     required ExtensionScope extensionScope,
     required LookupScope scope,
     required bool isLate,
-    DartType? declaredFieldType,
+    DartType? fieldType,
     required Token startToken,
     required InferenceDataForTesting? inferenceDataForTesting,
     required InferenceDefaultType inferenceDefaultType,
@@ -291,10 +297,11 @@ class Resolver {
     InferredFieldInitializer inferredFieldInitializer = context.typeInferrer
         .inferFieldInitializer(
           fileUri: fileUri,
-          declaredType: declaredFieldType,
+          declaredType: fieldType,
           initializer: result.initializer,
           inferenceDefaultType: inferenceDefaultType,
           internalThisVariable: internalThisVariable,
+          thisType: internalThisVariable?.type ?? bodyBuilderContext.thisType,
         );
     context.performBacklog(result.annotations);
     return inferredFieldInitializer;
@@ -358,6 +365,7 @@ class Resolver {
         fileUri: fileUri,
         initializer: initializer,
         internalThisVariable: bodyBuilderContext.createInternalThisVariable(),
+        bodyBuilderContext: bodyBuilderContext,
       );
     }
     context.performBacklog(result.annotations);
@@ -733,7 +741,7 @@ class Resolver {
     required SourceConstructorBuilder constructorBuilder,
     required FunctionBodyBuildingContext functionBodyBuildingContext,
     required Uri fileUri,
-    required Token startToken,
+    required Token thisToken,
     required Token? metadata,
   }) {
     _benchmarker
@@ -777,7 +785,7 @@ class Resolver {
     try {
       BuildPrimaryConstructorBodyResult result = bodyBuilder
           .buildPrimaryConstructorBody(
-            startToken: startToken,
+            thisToken: thisToken,
             metadata: metadata,
           );
       _finishFunction(
@@ -802,7 +810,7 @@ class Resolver {
     on DebugAbort {
       rethrow;
     } catch (e, s) {
-      throw new Crash(fileUri, startToken.charOffset, e, s);
+      throw new Crash(fileUri, thisToken.charOffset, e, s);
     }
     _benchmarker
         // Coverage-ignore(suite): Not run.
@@ -1044,6 +1052,10 @@ class Resolver {
                     libraryBuilder.loader.isClosureContextLoweringEnabled,
               ),
           constructorContext: null,
+          thisType:
+              extensionThis?.type ??
+              internalThisVariable?.type ??
+              bodyBuilderContext.thisType,
         );
     ReturnStatement returnStatement =
         inferredFunctionBody.body as ReturnStatement;
@@ -1563,6 +1575,10 @@ class Resolver {
         body: body,
         contextAllocationStrategy: contextAllocationStrategy,
         constructorContext: bodyBuilderContext.constructorContext,
+        thisType:
+            thisVariable?.type ??
+            internalThisVariable?.type ??
+            bodyBuilderContext.thisType,
       );
       inferredBody = inferredFunctionBody.body;
     } else {

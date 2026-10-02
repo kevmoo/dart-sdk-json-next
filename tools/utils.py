@@ -371,13 +371,17 @@ def GetVersion(no_git_hash=False, version_file=None):
     if not version:
         return None
 
+    # Fork marker so a dart-sdk-json-next build is never mistaken for the
+    # stock SDK it was synced from, on every channel.
+    fork_tag = 'json-next' if no_git_hash else 'json-next.{}'.format(
+        GetGitRevision())
     suffix = ''
     if version.channel in ['main', 'be']:
-        suffix = ('-json-next'
-                  if no_git_hash else '-json-next.{}'.format(GetGitRevision()))
+        suffix = '-{}'.format(fork_tag)
     elif version.channel in ('beta', 'dev'):
-        suffix = '-{}.{}.{}'.format(version.prerelease,
-                                    version.prerelease_patch, version.channel)
+        suffix = '-{}.{}.{}.{}'.format(version.prerelease,
+                                       version.prerelease_patch,
+                                       version.channel, fork_tag)
     else:
         assert version.channel == 'stable'
 
